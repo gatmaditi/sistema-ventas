@@ -543,9 +543,12 @@ function guardarEnStorage() {
         ventasHoy: estado.ventasHoy, historial: estado.historial,
         esperas: estado.esperas, inventario: estado.inventario,
         clientes: estado.clientes, empleados: estado.empleados,
-        papelera: estado.papelera,
-        config: estado.config
+        papelera: estado.papelera, config: estado.config
     }));
+    // Sincronizar negocio a Supabase si es dueño (en background)
+    if (rolActual === 'owner' && navigator.onLine) {
+        sbGuardarNegocio();
+    }
 }
 
 function cargarDesdeStorage() {
@@ -662,67 +665,56 @@ async function sbEliminarEmpleado(id) {
 
 async function sbCargarEmpleados() {
     try {
-        const { data, error } = await sbClient
-            .from('empleados')
-            .select('*')
-            .eq('negocio_id', getNegocioId());
-        if (error) {
-// sb silent
-// sb silent
-            return false;
-        }
+        const { data, error } = await sbClient.from('empleados').select('*').eq('negocio_id', getNegocioId());
+        if (error) return false;
         if (data && data.length > 0) {
             estado.empleados = data.map(e => ({
-                id:             e.id,
-                nombre:         e.nombre,
-                codigo:         e.codigo,
-                rol:            e.rol,
-                permisos:       e.permisos || {ventas:true,esperas:false,historial:false,inventario:false,cierre:false,eliminar:false},
-                activo:         e.activo,
-                fecha_creacion: e.fecha_creacion
+                id: e.id, nombre: e.nombre, codigo: e.codigo, rol: e.rol,
+                permisos: e.permisos || {ventas:true,esperas:false,historial:false,inventario:false,cierre:false,eliminar:false},
+                activo: e.activo, fecha_creacion: e.fecha_creacion
             }));
             guardarEnStorage();
             return true;
         }
         return false;
-    } catch(e) {
-        // Ignorar DataCloneError del SDK (bug interno de Supabase, no afecta funcionalidad)
-        if (!e.message?.includes('DataCloneError') && !e.message?.includes('postMessage')) {
-// sb silent
-        }
-        return false;
-    }
+    } catch(e) { return false; }
+}
+
+async function sbGuardarNegocio() {
+    const id = getNegocioId();
+    if (!id || id === 'local') return;
+    try {
+        await sbClient.from('negocios').upsert({
+            id, config: estado.config, inventario: estado.inventario,
+            logo: estado.logo, updated_at: new Date().toISOString()
+        }, { onConflict: 'id' });
+    } catch(e) {}
+}
+
+async function sbCargarNegocio(negocioId) {
+    try {
+        const { data, error } = await sbClient.from('negocios').select('*').eq('id', negocioId).maybeSingle();
+        if (error || !data) return false;
+        if (data.config) estado.config = data.config;
+        if (data.inventario?.productos?.length > 0) estado.inventario = data.inventario;
+        if (data.logo) estado.logo = data.logo;
+        guardarEnStorage();
+        return true;
+    } catch(e) { return false; }
 }
 
 async function sbBuscarPorCodigo(codigo) {
     try {
-        const { data, error } = await sbClient
-            .from('empleados')
-            .select('*')
-            .eq('codigo', codigo)
-            .eq('activo', true)
-            .maybeSingle();
-
-        console.log('SB buscar codigo:', codigo, '| data:', data, '| error:', error);
-
-        if (error) { console.error('SB error:', error.code, error.message, error.hint); return null; }
-        if (!data) { console.warn('SB: no se encontró empleado con código', codigo); return null; }
-
+        const { data, error } = await sbClient.from('empleados').select('*')
+            .eq('codigo', codigo).eq('activo', true).maybeSingle();
+        if (error || !data) return null;
         if (!estado.user && data.negocio_id) estado.user = data.negocio_id;
-
         return {
-            id:         data.id,
-            nombre:     data.nombre,
-            codigo:     data.codigo,
-            rol:        data.rol,
-            permisos:   data.permisos || {},
-            activo:     data.activo,
-            negocio_id: data.negocio_id
+            id: data.id, nombre: data.nombre, codigo: data.codigo,
+            rol: data.rol, permisos: data.permisos || {},
+            activo: data.activo, negocio_id: data.negocio_id
         };
-    } catch(e) {
-        console.error('SB excepción:', e);
-        return null;
-    }
+    } catch(e) { return null; }
 }
 
 // ============================================
@@ -737,20 +729,16 @@ async function entrarConCodigo() {
 
     let emp = null;
 
-    // 1. Siempre intentar Supabase (online o no, dejar que falle solo)
+    // 1. Buscar en Supabase
     emp = await sbBuscarPorCodigo(codigo);
-    console.log('Resultado SB:', emp);
 
-    // 2. Fallback a localStorage
+    // 2. Fallback localStorage
     if (!emp) {
-        console.log('Intentando localStorage...');
         const raw = localStorage.getItem('vf_pollos');
         if (raw) {
             try {
                 const d = JSON.parse(raw);
-                const lista = d.empleados || [];
-                console.log('Empleados en local:', lista.map(e => e.codigo));
-                const found = lista.find(e => e.codigo === codigo && e.activo === true);
+                const found = (d.empleados || []).find(e => e.codigo === codigo && e.activo === true);
                 if (found) emp = found;
             } catch(e) {}
         }
@@ -758,9 +746,17 @@ async function entrarConCodigo() {
 
     if (!emp) return notify('❌ Código inválido o empleado inactivo', 'red');
 
+    // 3. Cargar inventario/config del negocio desde Supabase
+    if (emp.negocio_id && navigator.onLine) {
+        await sbCargarNegocio(emp.negocio_id);
+    }
+
     rolActual = emp.rol;
     modoLocal = false;
     estado.empleadoActual = emp;
+
+    // 4. Persistir sesión del empleado en localStorage
+    localStorage.setItem('vf_sesion_empleado', JSON.stringify(emp));
 
     notify(`✅ Bienvenido ${emp.nombre}`, 'green');
     input.value = '';
@@ -942,6 +938,7 @@ function cerrarSesion() {
     estado.empleadoActual = null;
     rolActual = null;
     estado.carrito = [];
+    localStorage.removeItem('vf_sesion_empleado');
     guardarEnStorage();
     mostrarCapa('capa-login');
     const nom = document.getElementById('in-nom');
@@ -2599,23 +2596,50 @@ function limpiarGP() {
 }
 
 // INICIALIZAR
-if (!cargarDesdeStorage()) {
-    mostrarCapa('capa-login');
-} else {
-    mostrarCapa('capa-dash');
-    cargarPanel();
-    actualizarDrawerUser();
-    actualizarLogos();
-    // Sincronizar empleados desde Supabase en background
-    if (navigator.onLine) {
-        sbCargarEmpleados().then(ok => {
-            if (ok) console.log('✅ Empleados sincronizados desde Supabase');
-        });
+async function inicializar() {
+    const sesionEmp = localStorage.getItem('vf_sesion_empleado');
+    const hayDatos  = cargarDesdeStorage();
+
+    if (sesionEmp) {
+        // Restaurar sesión de empleado
+        try {
+            const emp = JSON.parse(sesionEmp);
+            rolActual = emp.rol;
+            modoLocal = false;
+            estado.empleadoActual = emp;
+            // Cargar datos del negocio desde Supabase
+            if (emp.negocio_id && navigator.onLine) {
+                await sbCargarNegocio(emp.negocio_id);
+            }
+            mostrarCapa('capa-dash');
+            cargarPanel();
+            actualizarDrawerUser();
+            actualizarLogos();
+            aplicarPermisosDrawer(emp);
+        } catch(e) {
+            localStorage.removeItem('vf_sesion_empleado');
+            mostrarCapa('capa-login');
+        }
+    } else if (hayDatos) {
+        // Sesión de dueño
+        rolActual = 'owner';
+        mostrarCapa('capa-dash');
+        cargarPanel();
+        actualizarDrawerUser();
+        actualizarLogos();
+        if (navigator.onLine) {
+            sbGuardarNegocio(); // sincronizar negocio al arrancar
+            sbCargarEmpleados();
+        }
+    } else {
+        mostrarCapa('capa-login');
     }
 }
 
-// Escuchar cambios de conexión y re-sincronizar
-window.addEventListener('online',  () => { cargarPanel(); sbCargarEmpleados(); notify('🟢 Conexión restaurada', 'green'); });
+inicializar();
+
+// Limpiar sesión empleado al cerrar sesión ya está en cerrarSesion()
+window.addEventListener('online',  () => { cargarPanel(); notify('🟢 Conexión restaurada', 'green'); });
 window.addEventListener('offline', () => { cargarPanel(); notify('🔴 Sin conexión - modo local', 'orange'); });
 
 </script>
