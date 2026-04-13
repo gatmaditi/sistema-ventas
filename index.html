@@ -1,4 +1,6 @@
-<!DOCTYPE html>
+
+            
+           <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
@@ -234,7 +236,33 @@
 <div id="notif" class="alerta"></div>
 
 <!-- Modales -->
-<div id="modal-anular" class="modal-anular"><div class="modal-anular-content"><h3>⚠️ ¿ANULAR VENTA?</h3><p id="anular-texto"></p><div class="modal-anular-buttons"><button class="btn-anular-cancelar" onclick="cerrarModalAnular()">CANCELAR</button><button class="btn-anular-confirmar" onclick="confirmarAnularVenta()">ACEPTAR</button></div></div></div>
+<div id="modal-anular" class="modal-anular">
+  <div class="modal-anular-content">
+    <h3>⚠️ ¿ANULAR VENTA?</h3>
+    <p id="anular-texto"></p>
+    <!-- Paso 1: confirmar -->
+    <div id="anular-paso1" class="modal-anular-buttons">
+      <button style="background:#333;color:#ccc;" onclick="cerrarModalAnular()">CANCELAR</button>
+      <button style="background:var(--rojo);color:white;" onclick="anularPaso2()">ACEPTAR</button>
+    </div>
+    <!-- Paso 2: justificar? -->
+    <div id="anular-paso2" style="display:none;">
+      <p style="margin:10px 0;font-size:14px;color:#aaa;">¿Deseas justificar la eliminación?</p>
+      <div class="modal-anular-buttons">
+        <button style="background:#333;color:#ccc;" onclick="anularEjecutar('')">NO — ELIMINAR DIRECTO</button>
+        <button style="background:var(--azul);color:white;" onclick="anularPaso3()">SÍ — AGREGAR MOTIVO</button>
+      </div>
+    </div>
+    <!-- Paso 3: escribir motivo -->
+    <div id="anular-paso3" style="display:none;">
+      <textarea id="anular-motivo-txt" placeholder="Escribe el motivo..." style="width:100%;height:80px;background:#111;color:white;border:1px solid #444;border-radius:8px;padding:10px;font-size:14px;margin:10px 0;resize:none;"></textarea>
+      <div class="modal-anular-buttons">
+        <button style="background:#333;color:#ccc;" onclick="anularPaso2()">← VOLVER</button>
+        <button style="background:var(--neon);color:black;" onclick="anularEnviarConMotivo()">ENVIAR Y ELIMINAR</button>
+      </div>
+    </div>
+  </div>
+</div>
 <div id="modal-resumen" class="modal"><div class="modal-content"><h3 id="modal-titulo">🔒 CIERRE DE CAJA</h3><div id="resumen-texto"></div><div class="modal-buttons"><button class="btn-cancelar" onclick="cerrarModal()">CANCELAR</button><button class="btn-confirmar" onclick="confirmarAccionModal()">ACEPTAR</button></div></div></div>
 <div id="modal-editar-permisos" class="modal" style="display:none;"><div class="modal-content" style="max-width:400px;"><h3 style="color:var(--neon);">✏️ EDITAR PERMISOS</h3><p id="edit-emp-nombre" style="margin:5px 0 15px;"></p><div style="background:#0a1a0a;border-radius:10px;padding:15px;text-align:left;"><div class="checkbox-row"><input type="checkbox" id="edit-perm-ventas"><label>💰 Realizar ventas</label></div><div class="checkbox-row"><input type="checkbox" id="edit-perm-esperas"><label>⏳ Gestionar esperas</label></div><div class="checkbox-row"><input type="checkbox" id="edit-perm-historial"><label>📜 Ver historial</label></div><div class="checkbox-row"><input type="checkbox" id="edit-perm-inventario"><label>📦 Ver inventario</label></div><div class="checkbox-row"><input type="checkbox" id="edit-perm-cierre"><label>🔒 Cerrar caja</label></div><div class="checkbox-row"><input type="checkbox" id="edit-perm-eliminar"><label>🗑️ Eliminar ventas del día</label></div></div><div style="display:flex;gap:10px;margin-top:20px;"><button class="btn btn-gris" onclick="cerrarEditarPermisos()" style="flex:1;">CANCELAR</button><button class="btn btn-neon" onclick="guardarPermisosEditados()" style="flex:1;">GUARDAR</button></div></div></div>
 
@@ -2069,6 +2097,8 @@ function finalizarVenta(imprimir) {
     }
     
     guardarEnStorage();
+    // Sincronizar venta a Supabase para que el dueño la vea
+    if (navigator.onLine) sbGuardarVenta(venta);
     estado.carrito = [];
     document.getElementById('v-cli').value = '';
     document.getElementById('pago-con').value = '';
@@ -2145,6 +2175,9 @@ function cargarPanel() {
     document.getElementById('txt-nit').innerHTML = online
         ? '<span style="color:#00ff88;">🟢 Conectado</span>'
         : '<span style="color:#ff6666;">🔴 Sin conexión</span>';
+
+    // Dueño online: sincronizar ventas desde Supabase en background
+    if (!emp && online) sbCargarVentasHoy();
     
     let te = 0, tq = 0, ce = 0, cq = 0;
     estado.ventasHoy.forEach(v => {
@@ -2337,15 +2370,52 @@ function restaurarDesdeArchivo(input) {
 
 function mostrarModalAnular(idx) {
     const emp = estado.empleadoActual;
-    if (emp && !emp.permisos?.eliminar) {
-        notify('❌ No tienes permiso para eliminar ventas', 'red');
-        return;
-    }
+    if (emp && !emp.permisos?.eliminar) return notify('❌ No tienes permiso para eliminar ventas', 'red');
     ventaAAnular = idx;
     const v = estado.ventasHoy[idx];
     if (!v) return;
-    document.getElementById('anular-texto').innerHTML = `¿Anular venta <b>#${String(v.numero).padStart(4, '0')}</b> de <b>${formatMoney(v.total)}</b>?<br><small style="color:#aaa;">Se pedirá un motivo.</small>`;
+    document.getElementById('anular-texto').innerHTML = `Venta <b>#${String(v.numero).padStart(4,'0')}</b> — <b>${v.cliente}</b> — <b>${formatMoney(v.total)}</b>`;
+    // Reset pasos
+    document.getElementById('anular-paso1').style.display = 'flex';
+    document.getElementById('anular-paso2').style.display = 'none';
+    document.getElementById('anular-paso3').style.display = 'none';
+    document.getElementById('anular-motivo-txt').value = '';
     document.getElementById('modal-anular').style.display = 'flex';
+}
+
+function anularPaso2() {
+    document.getElementById('anular-paso1').style.display = 'none';
+    document.getElementById('anular-paso2').style.display = 'block';
+    document.getElementById('anular-paso3').style.display = 'none';
+}
+
+function anularPaso3() {
+    document.getElementById('anular-paso2').style.display = 'none';
+    document.getElementById('anular-paso3').style.display = 'block';
+}
+
+function anularEnviarConMotivo() {
+    const motivo = document.getElementById('anular-motivo-txt').value.trim();
+    if (!motivo) return notify('❌ Escribe el motivo', 'red');
+    anularEjecutar(motivo);
+}
+
+function anularEjecutar(motivo) {
+    if (ventaAAnular === null || !estado.ventasHoy[ventaAAnular]) return cerrarModalAnular();
+    const v = estado.ventasHoy[ventaAAnular];
+    const num = String(v.numero).padStart(4, '0');
+    // Restaurar stock correctamente
+    v.items.forEach(item => {
+        const p = estado.inventario.productos.find(p => p.id === item.pid);
+        if (p && p.stockActivo) p.stock += item.c;
+    });
+    agregarAPapelera('venta', v, motivo || 'Sin motivo');
+    estado.ventasHoy.splice(ventaAAnular, 1);
+    if (navigator.onLine) sbEliminarVenta(v.numero);
+    guardarEnStorage();
+    cargarPanel();
+    cerrarModalAnular();
+    notify(`🗑️ Venta #${num} anulada`, 'red');
 }
 
 function cerrarModalAnular() {
@@ -2353,30 +2423,7 @@ function cerrarModalAnular() {
     ventaAAnular = null;
 }
 
-function confirmarAnularVenta() {
-    if (ventaAAnular !== null && estado.ventasHoy[ventaAAnular]) {
-        const v = estado.ventasHoy[ventaAAnular];
-        const num = String(v.numero).padStart(4, '0');
-        
-        const motivo = prompt(`✏️ Motivo de eliminación de la venta #${num}:`, '');
-        
-        agregarAPapelera('venta', v, motivo || 'Sin motivo');
-        
-        v.items.forEach(item => {
-            estado.config.categorias.forEach(cat => {
-                const p = cat.productos.find(p => p.id === item.pid);
-                if (p && p.stockActivo) p.stock += item.c;
-            });
-        });
-        estado.ventasHoy.splice(ventaAAnular, 1);
-        guardarEnStorage();
-        cargarPanel();
-        cerrarModalAnular();
-        notify(`🗑️ Venta #${num} anulada`, 'red');
-    } else {
-        cerrarModalAnular();
-    }
-}
+function confirmarAnularVenta() { anularEjecutar(''); } // compat
 
 // ============================================
 // ELIMINAR ESPERA CON PAPELERA
@@ -2422,6 +2469,52 @@ async function registrarNegocioCliente() {
     guardarEnStorage();
     notify('✅ Negocio registrado. Inicia sesión.', 'green');
     volverLogin();
+}
+
+async function sbGuardarVenta(venta) {
+    const negocioId = estado.empleadoActual?.negocio_id || getNegocioId();
+    if (!negocioId || negocioId === 'local') return;
+    try {
+        await sbClient.from('ventas_hoy').upsert({
+            id: `${negocioId}_${venta.numero}`,
+            negocio_id: negocioId,
+            numero: venta.numero,
+            cliente: venta.cliente,
+            total: venta.total,
+            metodo: venta.metodo,
+            hora: venta.hora,
+            items: venta.items,
+            cajero: venta.cajero,
+            fecha: new Date().toLocaleDateString()
+        }, { onConflict: 'id' });
+    } catch(e) {}
+}
+
+async function sbEliminarVenta(numero) {
+    const negocioId = estado.empleadoActual?.negocio_id || getNegocioId();
+    if (!negocioId || negocioId === 'local') return;
+    try {
+        await sbClient.from('ventas_hoy').delete()
+            .eq('negocio_id', negocioId).eq('numero', numero);
+    } catch(e) {}
+}
+
+async function sbCargarVentasHoy() {
+    const negocioId = getNegocioId();
+    if (!negocioId || negocioId === 'local') return;
+    try {
+        const hoy = new Date().toLocaleDateString();
+        const { data, error } = await sbClient.from('ventas_hoy')
+            .select('*').eq('negocio_id', negocioId).eq('fecha', hoy)
+            .order('numero', { ascending: true });
+        if (error || !data) return;
+        estado.ventasHoy = data.map(v => ({
+            numero: v.numero, cliente: v.cliente, total: v.total,
+            metodo: v.metodo, hora: v.hora, items: v.items, cajero: v.cajero
+        }));
+        guardarEnStorage();
+        cargarPanel();
+    } catch(e) {}
 }
 
 // ============================================
