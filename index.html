@@ -359,7 +359,7 @@
         <div class="drawer-section-title">📊 REPORTES</div>
         <div class="drawer-item" onclick="cerrarDrawer(); mostrarReporteFechas()"><div class="icon">📅</div><div class="text">Reporte por Fechas</div></div>
         <div class="drawer-item" onclick="cerrarDrawer(); mostrarGraficoVentas()"><div class="icon">📈</div><div class="text">Gráfico de Ventas</div></div>
-        <div class="drawer-item" onclick="cerrarDrawer(); mostrarEstadisticasCajeros()"><div class="icon">👥</div><div class="text">Estadísticas por Cajero</div></div>
+        <div class="drawer-item" onclick="cerrarDrawer(); mostrarEstadisticasCajeros()"><div class="icon">👥</div><div class="text">Estadísticas por Persona</div></div>
         <div class="drawer-item" onclick="cerrarDrawer(); mostrarGanancias()"><div class="icon">💰</div><div class="text">Ganancias</div></div>
     </div>
     <div class="drawer-section">
@@ -1741,19 +1741,13 @@ function mostrarPrivacidad() {
         accionModal = null;
         return;
     }
-    
-    let expiracion = new Date();
-    expiracion.setDate(expiracion.getDate() + 30);
+
+    // Vista dueño — solo botón de cambiar contraseña
     let html = `
         <div class="card">
             <p><b>👤 Cuenta:</b> ${estado.user}</p>
-            <p><b>🔑 Key activa:</b> VF-DEMO-1234</p>
-            <p><b>📅 Expiración:</b> ${expiracion.toLocaleDateString()}</p>
-            <p><b>⏳ Días restantes:</b> 30 días</p>
             <hr>
-            <label>🔐 Cambiar contraseña</label>
-            <input type="password" id="nueva-pass" placeholder="Nueva contraseña">
-            <button class="btn btn-verde" onclick="cambiarPassword()">CAMBIAR</button>
+            <button class="btn btn-azul" onclick="mostrarFormCambiarPassword()">🔐 Cambiar contraseña</button>
             <hr>
             <button class="btn btn-rojo" onclick="borrarTodosLosDatos()">🗑️ BORRAR TODOS LOS DATOS</button>
         </div>
@@ -1764,15 +1758,56 @@ function mostrarPrivacidad() {
     accionModal = null;
 }
 
-function cambiarPassword() {
-    const nueva = document.getElementById('nueva-pass').value;
-    if (nueva) {
+function mostrarFormCambiarPassword() {
+    let html = `
+        <div class="card">
+            <p style="color:#aaa;font-size:13px;margin-bottom:15px;">Para cambiar tu contraseña, ingresa la contraseña actual y la nueva dos veces para confirmar.</p>
+            <label style="font-size:12px;color:#888;">Contraseña actual</label>
+            <input type="password" id="pass-actual" placeholder="Contraseña actual">
+            <label style="font-size:12px;color:#888;">Nueva contraseña</label>
+            <input type="password" id="pass-nueva" placeholder="Nueva contraseña">
+            <label style="font-size:12px;color:#888;">Confirmar nueva contraseña</label>
+            <input type="password" id="pass-confirmar" placeholder="Repetir nueva contraseña">
+            <div style="display:flex;gap:10px;margin-top:10px;">
+                <button class="btn btn-gris" style="flex:1;" onclick="mostrarPrivacidad()">← VOLVER</button>
+                <button class="btn btn-verde" style="flex:1;" onclick="confirmarCambioPassword()">CONFIRMAR</button>
+            </div>
+        </div>
+    `;
+    document.getElementById('resumen-texto').innerHTML = html;
+    document.getElementById('modal-titulo').innerHTML = '🔐 CAMBIAR CONTRASEÑA';
+}
+
+function confirmarCambioPassword() {
+    const actual    = document.getElementById('pass-actual').value;
+    const nueva     = document.getElementById('pass-nueva').value;
+    const confirmar = document.getElementById('pass-confirmar').value;
+
+    if (!actual || !nueva || !confirmar) return notify('❌ Completa todos los campos', 'red');
+    if (actual !== estado.nit) return notify('❌ La contraseña actual es incorrecta', 'red');
+    if (nueva.length < 4) return notify('❌ La nueva contraseña debe tener al menos 4 caracteres', 'red');
+    if (nueva !== confirmar) return notify('❌ Las contraseñas nuevas no coinciden', 'red');
+
+    // Pedir confirmación
+    accionModal = () => {
         estado.nit = nueva;
         guardarEnStorage();
-        notify('✅ Contraseña cambiada', 'green');
+        notify('✅ Contraseña cambiada correctamente', 'green');
         cerrarModal();
-    } else notify('❌ Ingresa nueva contraseña', 'red');
+    };
+    document.getElementById('resumen-texto').innerHTML = `
+        <div class="card">
+            <p style="font-size:15px;">¿Estás seguro de cambiar tu contraseña?</p>
+            <p style="font-size:12px;color:#888;">Esta acción no se puede deshacer.</p>
+        </div>
+    `;
+    document.getElementById('modal-titulo').innerHTML = '⚠️ CONFIRMAR CAMBIO';
+    // Mostrar botones de confirmar/cancelar del modal principal
+    document.querySelector('.btn-cancelar').style.display = '';
+    document.querySelector('.btn-confirmar').style.display = '';
 }
+
+function cambiarPassword() {} // compat vacío
 function borrarTodosLosDatos() {
     if (confirm('⚠️ ¿BORRAR TODOS LOS DATOS? No se puede deshacer.')) {
         localStorage.clear();
@@ -2243,7 +2278,7 @@ function finalizarVenta(imprimir) {
         pagoCon: metodo === 'Efectivo' ? pagoCon : null,
         vuelto: metodo === 'Efectivo' ? vuelto : null,
         hora: formatoHora(), items: JSON.parse(JSON.stringify(estado.carrito)),
-        cajero: estado.user
+        cajero: estado.empleadoActual ? estado.empleadoActual.nombre : estado.user
     };
     estado.ventasHoy.push(venta);
     
