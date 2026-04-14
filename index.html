@@ -61,7 +61,7 @@
         .checkbox-row { display: flex; align-items: center; gap: 10px; margin: 10px 0; padding: 10px; background: #111; border-radius: 8px; }
         .checkbox-row input[type=checkbox] { width: 22px; height: 22px; margin: 0; cursor: pointer; accent-color: var(--neon); flex-shrink: 0; }
 
-        .modal-anular, .modal, .modal-confirm { display: none; position: fixed; top:0;left:0;width:100%;height:100%; background:rgba(0,0,0,0.95); z-index:3000; justify-content:center; align-items:center; }
+        .modal-anular, .modal, .modal-confirm { display: none; position: fixed; top:0;left:0;width:100%;height:100%; background:rgba(0,0,0,0.95); z-index:10001; justify-content:center; align-items:center; }
         .modal-anular-content, .modal-content, .modal-confirm-content { background:var(--card); border-radius:20px; padding:25px; width:95%; max-width:800px; text-align:center; max-height:90vh; overflow-y:auto; }
         .modal-anular-content { border:2px solid var(--rojo); max-width:400px; }
         .modal-content { border:1px solid var(--neon); }
@@ -658,7 +658,21 @@ const SB_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsIn
 const sbClient = supabase.createClient(SB_URL, SB_KEY);
 
 // negocio_id = usuario del dueño (simple, único por negocio)
-function getNegocioId() { return estado.user || 'local'; }
+function getNegocioId() {
+    // Primero intenta del estado
+    if (estado.user && estado.user !== '') return estado.user;
+    // Si es empleado, usa negocio_id del empleado
+    if (estado.empleadoActual?.negocio_id) return estado.empleadoActual.negocio_id;
+    // Intenta desde sesion guardada
+    try {
+        const s = localStorage.getItem('vf_sesion_empleado');
+        if (s) {
+            const emp = JSON.parse(s);
+            if (emp.negocio_id) return emp.negocio_id;
+        }
+    } catch(e) {}
+    return 'local';
+}
 
 async function sbGuardarEmpleado(emp) {
     try {
@@ -875,54 +889,64 @@ function agregarAPapelera(tipo, elemento, motivo) {
     if (navigator.onLine) sbGuardarPapelera(papeleraItem);
 }
 
-function mostrarPapelera() {
+async function mostrarPapelera() {
     const papeleraDiv = document.getElementById('capa-papelera');
     const contenido = document.getElementById('papelera-contenido');
     
-    if (estado.papelera.length === 0) {
-        contenido.innerHTML = '<div class="card">No hay elementos en la papelera</div>';
-    } else {
-        let html = '';
-        estado.papelera.forEach(item => {
-            const tipoIcon = item.tipo === 'venta' ? '💰' : '⏳';
-            html += `
-                <div class="card" style="margin-bottom:15px; border-left:3px solid var(--rojo);">
-                    <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
-                        <div>
-                            <span style="background:var(--rojo); padding:2px 8px; border-radius:12px; font-size:11px;">${tipoIcon} ${item.tipo.toUpperCase()}</span>
-                            <span style="margin-left:8px; font-size:12px; color:#aaa;">${item.fecha} ${item.hora}</span>
-                        </div>
-                        <div>
-                            <span style="color:var(--neon);">👤 ${item.eliminadoPor}</span>
-                            <span style="font-size:11px; color:#888;"> (${item.rol})</span>
-                        </div>
-                    </div>
-                    <div style="margin-top:10px; padding:10px; background:#0a0a0f; border-radius:8px;">
-                        <div style="font-weight:bold; margin-bottom:5px;">📋 DATOS ELIMINADOS:</div>
-                        ${item.tipo === 'venta' ? `
-                            <div>📦 Pedido #${String(item.elemento.numero).padStart(4, '0')}</div>
-                            <div>🧾 Cliente: ${item.elemento.cliente}</div>
-                            <div>💰 Total: ${formatMoney(item.elemento.total)}</div>
-                            <div>📅 Hora original: ${item.elemento.hora}</div>
-                            <div>🛒 Productos: ${item.elemento.items.map(i => `${i.c}x ${i.n}`).join(', ')}</div>
-                        ` : `
-                            <div>⏳ Pedido en espera #${String(item.elemento.numero).padStart(4, '0')}</div>
-                            <div>🧾 Cliente: ${item.elemento.cliente}</div>
-                            <div>🛒 Productos: ${item.elemento.items.map(i => `${i.c}x ${i.n}`).join(', ')}</div>
-                        `}
-                    </div>
-                    <div style="margin-top:8px; background:#1a0a0a; padding:8px; border-radius:6px;">
-                        <span style="color:#ff8888;">📝 MOTIVO:</span>
-                        <span style="font-style:italic;">${item.motivo}</span>
-                    </div>
-                </div>
-            `;
-        });
-        contenido.innerHTML = html;
-    }
-    
     papeleraDiv.style.display = 'block';
     document.getElementById('capa-dash').style.display = 'none';
+    contenido.innerHTML = '<div class="card" style="text-align:center;color:#888;">🔄 Cargando...</div>';
+
+    // Siempre cargar desde Supabase si hay conexión
+    if (navigator.onLine) await sbCargarPapelera();
+
+    renderPapelera();
+}
+
+function renderPapelera() {
+    const contenido = document.getElementById('papelera-contenido');
+    if (!contenido) return;
+    if (estado.papelera.length === 0) {
+        contenido.innerHTML = '<div class="card">No hay elementos en la papelera</div>';
+        return;
+    }
+    let html = '';
+    estado.papelera.forEach(item => {
+        const tipoIcon = item.tipo === 'venta' ? '💰' : '⏳';
+        html += `
+            <div class="card" style="margin-bottom:15px; border-left:3px solid var(--rojo);">
+                <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+                    <div>
+                        <span style="background:var(--rojo); padding:2px 8px; border-radius:12px; font-size:11px;">${tipoIcon} ${item.tipo.toUpperCase()}</span>
+                        <span style="margin-left:8px; font-size:12px; color:#aaa;">${item.fecha} ${item.hora}</span>
+                    </div>
+                    <div>
+                        <span style="color:var(--neon);">👤 ${item.eliminadoPor}</span>
+                        <span style="font-size:11px; color:#888;"> (${item.rol})</span>
+                    </div>
+                </div>
+                <div style="margin-top:10px; padding:10px; background:#0a0a0f; border-radius:8px;">
+                    <div style="font-weight:bold; margin-bottom:5px;">📋 DATOS ELIMINADOS:</div>
+                    ${item.tipo === 'venta' ? `
+                        <div>📦 Pedido #${String(item.elemento.numero).padStart(4, '0')}</div>
+                        <div>🧾 Cliente: ${item.elemento.cliente}</div>
+                        <div>💰 Total: ${formatMoney(item.elemento.total)}</div>
+                        <div>📅 Hora original: ${item.elemento.hora}</div>
+                        <div>🛒 Productos: ${item.elemento.items.map(i => `${i.c}x ${i.n}`).join(', ')}</div>
+                    ` : `
+                        <div>⏳ Pedido en espera #${String(item.elemento.numero).padStart(4, '0')}</div>
+                        <div>🧾 Cliente: ${item.elemento.cliente}</div>
+                        <div>🛒 Productos: ${item.elemento.items.map(i => `${i.c}x ${i.n}`).join(', ')}</div>
+                    `}
+                </div>
+                <div style="margin-top:8px; background:#1a0a0a; padding:8px; border-radius:6px;">
+                    <span style="color:#ff8888;">📝 MOTIVO:</span>
+                    <span style="font-style:italic;">${item.motivo}</span>
+                </div>
+            </div>
+        `;
+    });
+    contenido.innerHTML = html;
 }
 
 function cerrarPapelera() {
@@ -931,11 +955,17 @@ function cerrarPapelera() {
     cargarPanel();
 }
 
-function vaciarPapelera() {
+async function vaciarPapelera() {
     if (confirm('⚠️ ¿VACIAR LA PAPELERA COMPLETAMENTE? Esta acción no se puede deshacer.')) {
+        // Borrar en Supabase
+        if (navigator.onLine) {
+            try {
+                await sbClient.from('papelera').delete().eq('negocio_id', getNegocioId());
+            } catch(e) {}
+        }
         estado.papelera = [];
         guardarEnStorage();
-        mostrarPapelera();
+        renderPapelera();
         notify('🗑️ Papelera vaciada', 'green');
     }
 }
@@ -1145,7 +1175,7 @@ async function guardarPermisosEditados() {
     if (!empleadoEditandoId) return;
     const emp = estado.empleados.find(e => e.id === empleadoEditandoId);
     if (!emp) return;
-    
+
     emp.permisos = {
         ventas:    document.getElementById('edit-perm-ventas').checked,
         esperas:   document.getElementById('edit-perm-esperas').checked,
@@ -1154,9 +1184,25 @@ async function guardarPermisosEditados() {
         cierre:    document.getElementById('edit-perm-cierre').checked,
         eliminar:  document.getElementById('edit-perm-eliminar').checked
     };
-    
+
+    // Guardar en Supabase y local
     await sbGuardarEmpleado(emp);
     guardarEnStorage();
+
+    // Si el empleado tiene sesión activa en este dispositivo, actualizar sus permisos
+    try {
+        const sesRaw = localStorage.getItem('vf_sesion_empleado');
+        if (sesRaw) {
+            const sesEmp = JSON.parse(sesRaw);
+            if (sesEmp.id === emp.id) {
+                sesEmp.permisos = emp.permisos;
+                localStorage.setItem('vf_sesion_empleado', JSON.stringify(sesEmp));
+                estado.empleadoActual = sesEmp;
+                aplicarPermisosDrawer(sesEmp);
+            }
+        }
+    } catch(e) {}
+
     cargarEmpleados();
     cerrarEditarPermisos();
     notify('✅ Permisos actualizados', 'green');
@@ -1847,7 +1893,7 @@ function borrarHistorialCompleto() {
 // ============================================
 // ESPERAS
 // ============================================
-function abrirEsperas() {
+async function abrirEsperas() {
     const emp = estado.empleadoActual;
     if (emp && !emp.permisos?.esperas) {
         notify('❌ No tienes permiso para gestionar esperas', 'red');
@@ -1855,23 +1901,35 @@ function abrirEsperas() {
     }
     const esperasDiv = document.getElementById('capa-esperas');
     const contenido = document.getElementById('esperas-contenido');
-    
-    if (estado.esperas.length === 0) {
-        contenido.innerHTML = '<div class="card">No hay pedidos en espera</div>';
-    } else {
-        let html = '';
-        estado.esperas.forEach(e => {
-            html += `<div class="card" onclick="cargarEsperaDesdeCapa(${e.numero})" style="cursor:pointer;">
-                <b>#${String(e.numero).padStart(4, '0')}</b> - ${e.cliente}<br>
-                ${e.items.map(i => `${i.c}x ${i.n}`).join(', ')}<br>
-                <small>${e.hora}</small>
-            </div>`;
-        });
-        contenido.innerHTML = html;
-    }
-    
     esperasDiv.style.display = 'block';
     document.getElementById('capa-dash').style.display = 'none';
+    contenido.innerHTML = '<div class="card" style="text-align:center;color:#888;">🔄 Cargando...</div>';
+
+    // Cargar desde Supabase siempre
+    if (navigator.onLine) await sbCargarEsperas(getNegocioId());
+
+    renderEsperas();
+}
+
+function renderEsperas() {
+    const contenido = document.getElementById('esperas-contenido');
+    if (!contenido) return;
+    if (estado.esperas.length === 0) {
+        contenido.innerHTML = '<div class="card">No hay pedidos en espera</div>';
+        return;
+    }
+    let html = '';
+    estado.esperas.forEach(e => {
+        html += `<div class="card" style="cursor:pointer;">
+            <div onclick="cargarEsperaDesdeCapa(${e.numero})" style="margin-bottom:8px;">
+                <b>#${String(e.numero).padStart(4, '0')}</b> - ${e.cliente}<br>
+                ${e.items.map(i => `${i.c}x ${i.n}`).join(', ')}<br>
+                <small style="color:#888;">${e.hora}</small>
+            </div>
+            <button class="btn btn-rojo" style="margin:0;padding:6px;font-size:12px;" onclick="eliminarEspera(${e.numero})">🗑️ Eliminar</button>
+        </div>`;
+    });
+    contenido.innerHTML = html;
 }
 
 function cerrarEsperas() {
@@ -1994,14 +2052,70 @@ function mostrarEstadisticasCajeros() {
         notify('❌ No tienes permiso para ver estadísticas', 'red');
         return;
     }
-    const ventasPorCajero = {};
-    estado.ventasHoy.forEach(v => { const cajero = v.cajero || 'Cajero'; ventasPorCajero[cajero] = (ventasPorCajero[cajero] || 0) + v.total; });
-    let html = '<div class="card"><h3>👥 ESTADÍSTICAS POR CAJERO</h3>';
-    if (Object.keys(ventasPorCajero).length === 0) html += '<p>No hay datos aún</p>';
-    else Object.entries(ventasPorCajero).forEach(([cajero, total]) => { html += `<div class="cliente-card"><b>${cajero}</b><span>💰 ${formatMoney(total)}</span></div>`; });
+
+    // Agrupar por cajero con detalle de efectivo, QR y total
+    const stats = {};
+    estado.ventasHoy.forEach(v => {
+        const cajero = v.cajero || 'General';
+        if (!stats[cajero]) stats[cajero] = { efectivo: 0, qr: 0, total: 0, ventas: 0 };
+        stats[cajero].total += v.total;
+        stats[cajero].ventas++;
+        if (v.metodo === 'Efectivo') stats[cajero].efectivo += v.total;
+        else stats[cajero].qr += v.total;
+    });
+
+    // Determinar quién es el dueño
+    const nombreDueno = estado.user;
+
+    let html = `<div style="padding:5px;">
+        <p style="color:#888;font-size:13px;margin:0 0 15px;">Estadística de ventas por:</p>`;
+
+    if (Object.keys(stats).length === 0) {
+        html += '<p style="color:#888;text-align:center;">No hay ventas registradas hoy</p>';
+    } else {
+        // Dueño primero si tiene ventas
+        const entries = Object.entries(stats);
+        const dueno = entries.find(([nombre]) => nombre === nombreDueno);
+        const empleados = entries.filter(([nombre]) => nombre !== nombreDueno);
+        const ordenados = dueno ? [dueno, ...empleados] : empleados;
+
+        ordenados.forEach(([nombre, s]) => {
+            const esDueno = nombre === nombreDueno;
+            // Buscar rol del empleado en la lista
+            const empObj = estado.empleados.find(e => e.nombre === nombre);
+            const rolLabel = esDueno
+                ? '👑 DUEÑO'
+                : empObj?.rol === 'cashier' ? '💰 CAJERO' : '🍽️ MESERO';
+            const colorBorde = esDueno ? '#ffaa00' : 'var(--neon)';
+            const colorNombre = esDueno ? '#ffaa00' : 'white';
+
+            html += `<div style="background:#111;border-left:4px solid ${colorBorde};border-radius:10px;padding:14px;margin-bottom:12px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <span style="font-size:16px;font-weight:bold;color:${colorNombre};">${nombre}</span>
+                    <span style="font-size:11px;background:${esDueno ? '#2a1a00' : '#0a1a0a'};color:${colorBorde};padding:3px 10px;border-radius:12px;">${rolLabel}</span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px;">
+                    <div style="background:#0a0a0f;padding:8px;border-radius:8px;text-align:center;">
+                        <div style="color:#888;font-size:10px;">💵 EFECTIVO</div>
+                        <div style="font-weight:bold;color:#00ff88;">${formatMoney(s.efectivo)}</div>
+                    </div>
+                    <div style="background:#0a0a0f;padding:8px;border-radius:8px;text-align:center;">
+                        <div style="color:#888;font-size:10px;">📱 QR</div>
+                        <div style="font-weight:bold;color:#ffaa00;">${formatMoney(s.qr)}</div>
+                    </div>
+                    <div style="background:#0a0a0f;padding:8px;border-radius:8px;text-align:center;">
+                        <div style="color:#888;font-size:10px;">💰 TOTAL</div>
+                        <div style="font-weight:bold;color:var(--neon);">${formatMoney(s.total)}</div>
+                    </div>
+                </div>
+                <div style="text-align:right;margin-top:6px;font-size:11px;color:#666;">${s.ventas} venta${s.ventas !== 1 ? 's' : ''}</div>
+            </div>`;
+        });
+    }
+
     html += '</div>';
     document.getElementById('resumen-texto').innerHTML = html;
-    document.getElementById('modal-titulo').innerHTML = '👥 ESTADÍSTICAS';
+    document.getElementById('modal-titulo').innerHTML = '📊 ESTADÍSTICAS DE VENTAS';
     document.getElementById('modal-resumen').style.display = 'flex';
     accionModal = null;
 }
@@ -2485,7 +2599,7 @@ function eliminarEspera(numero) {
     estado.esperas = estado.esperas.filter(e => e.numero !== numero);
     guardarEnStorage();
     if (navigator.onLine) sbEliminarEspera(numero);
-    mostrarEsperas();
+    renderEsperas();
     notify('✅ Pedido en espera eliminado', 'green');
 }
 
@@ -2566,10 +2680,10 @@ async function sbCargarVentasHoy() {
 }
 
 async function sbGuardarEspera(espera) {
-    const negocioId = estado.empleadoActual?.negocio_id || getNegocioId();
-    if (!negocioId || negocioId === 'local') return;
+    const negocioId = getNegocioId();
+    if (!negocioId || negocioId === 'local') { console.warn('sbGuardarEspera: negocioId vacío'); return; }
     try {
-        await sbClient.from('esperas').upsert({
+        const { error } = await sbClient.from('esperas').upsert({
             id: `${negocioId}_${espera.numero}`,
             negocio_id: negocioId,
             numero: espera.numero,
@@ -2577,11 +2691,30 @@ async function sbGuardarEspera(espera) {
             items: espera.items,
             hora: espera.hora
         }, { onConflict: 'id' });
-    } catch(e) {}
+        if (error) console.error('sbGuardarEspera error:', error.message);
+    } catch(e) { console.error('sbGuardarEspera excepcion:', e); }
+}
+
+async function sbGuardarPapelera(item) {
+    const negocioId = getNegocioId();
+    if (!negocioId || negocioId === 'local') { console.warn('sbGuardarPapelera: negocioId vacío'); return; }
+    try {
+        const { error } = await sbClient.from('papelera').insert({
+            negocio_id: negocioId,
+            tipo: item.tipo,
+            elemento: item.elemento,
+            motivo: item.motivo,
+            fecha: item.fecha,
+            hora: item.hora,
+            eliminado_por: item.eliminadoPor,
+            rol: item.rol
+        });
+        if (error) console.error('sbGuardarPapelera error:', error.message);
+    } catch(e) { console.error('sbGuardarPapelera excepcion:', e); }
 }
 
 async function sbEliminarEspera(numero) {
-    const negocioId = estado.empleadoActual?.negocio_id || getNegocioId();
+    const negocioId = getNegocioId();
     if (!negocioId || negocioId === 'local') return;
     try {
         await sbClient.from('esperas').delete().eq('negocio_id', negocioId).eq('numero', numero);
@@ -2595,23 +2728,6 @@ async function sbCargarEsperas(negocioId) {
         const { data, error } = await sbClient.from('esperas').select('*').eq('negocio_id', nid).order('numero', { ascending: true });
         if (error || !data) return;
         estado.esperas = data.map(e => ({ numero: e.numero, cliente: e.cliente, items: e.items, hora: e.hora }));
-    } catch(e) {}
-}
-
-async function sbGuardarPapelera(item) {
-    const negocioId = estado.empleadoActual?.negocio_id || getNegocioId();
-    if (!negocioId || negocioId === 'local') return;
-    try {
-        await sbClient.from('papelera').insert({
-            negocio_id: negocioId,
-            tipo: item.tipo,
-            elemento: item.elemento,
-            motivo: item.motivo,
-            fecha: item.fecha,
-            hora: item.hora,
-            eliminado_por: item.eliminadoPor,
-            rol: item.rol
-        });
     } catch(e) {}
 }
 
@@ -2683,8 +2799,27 @@ function iniciarPolling() {
             if (dash && dash.style.display !== 'none') cargarPanel();
 
         } else {
-            // EMPLEADO: sincronizar esperas (para ver las de otros)
+            // EMPLEADO: sincronizar esperas y verificar si cambiaron sus permisos
             await sbCargarEsperas(negocioId);
+            // Verificar permisos actualizados en Supabase
+            try {
+                const { data } = await sbClient.from('empleados').select('permisos,activo')
+                    .eq('id', emp.id).maybeSingle();
+                if (data) {
+                    if (!data.activo) {
+                        // Fue desactivado, cerrar sesión
+                        notify('⚠️ Tu cuenta fue desactivada', 'red');
+                        setTimeout(() => cerrarSesion(), 2000);
+                    } else if (JSON.stringify(data.permisos) !== JSON.stringify(emp.permisos)) {
+                        // Permisos cambiaron, aplicar
+                        emp.permisos = data.permisos;
+                        estado.empleadoActual = emp;
+                        localStorage.setItem('vf_sesion_empleado', JSON.stringify(emp));
+                        aplicarPermisosDrawer(emp);
+                        notify('🔄 Permisos actualizados', 'green');
+                    }
+                }
+            } catch(e) {}
         }
     }, 8000);
 }
