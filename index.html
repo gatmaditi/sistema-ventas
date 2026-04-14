@@ -1725,14 +1725,25 @@ function actualizarNombreUI() {
 function mostrarPrivacidad() {
     const emp = estado.empleadoActual;
     if (emp) {
+        // Fecha de creación segura
+        let fechaReg = '—';
+        try {
+            const d = new Date(emp.fecha_creacion);
+            if (!isNaN(d)) fechaReg = d.toLocaleDateString();
+        } catch(e) {}
+
         let html = `
-            <div class="card">
-                <p><b>👤 Empleado:</b> ${emp.nombre}</p>
-                <p><b>🔑 Rol:</b> ${emp.rol === 'cashier' ? '💰 Cajero' : '🍽️ Mesero'}</p>
-                <p><b>📅 Fecha de registro:</b> ${new Date(emp.fecha_creacion).toLocaleDateString()}</p>
-                <p><b>🔐 Código de acceso:</b> <span style="background:#0a2a1a;padding:4px 8px;border-radius:6px;font-family:monospace;font-size:16px;letter-spacing:2px;">${emp.codigo}</span></p>
+            <div class="card" style="text-align:center;">
+                <h3 style="color:var(--neon);margin:0 0 5px;">🔒 MI CUENTA</h3>
+                <p style="color:#aaa;font-size:13px;margin:0 0 15px;">${estado.config.nombreRest}</p>
                 <hr>
-                <p style="font-size:12px;color:#888;">ℹ️ Los empleados no pueden modificar datos de la cuenta. Contacta al dueño para cambios.</p>
+                <p style="margin:8px 0;"><b>👤 Nombre:</b> ${emp.nombre}</p>
+                <p style="margin:8px 0;"><b>🔑 Rol:</b> ${emp.rol === 'cashier' ? '💰 Cajero' : '🍽️ Mesero'}</p>
+                <p style="margin:8px 0;"><b>📅 Fecha de registro:</b> ${fechaReg}</p>
+                <p style="margin:8px 0;"><b>🔐 Código de acceso:</b></p>
+                <div style="background:#0a2a1a;border:1px solid var(--neon);border-radius:10px;padding:12px;font-family:monospace;font-size:28px;letter-spacing:8px;font-weight:bold;color:var(--neon);">${emp.codigo}</div>
+                <hr>
+                <p style="font-size:12px;color:#666;">ℹ️ Contacta al dueño para cambios en tu cuenta.</p>
             </div>
         `;
         document.getElementById('resumen-texto').innerHTML = html;
@@ -1742,10 +1753,22 @@ function mostrarPrivacidad() {
         return;
     }
 
-    // Vista dueño — solo botón de cambiar contraseña
+    // Vista dueño — todos los datos + botón cambiar contraseña
+    const key = estado.config.key || 'VF-????-????-????-????';
+    const fechaRegistro = localStorage.getItem('vf_fecha_registro') || new Date().toLocaleDateString();
+    if (!localStorage.getItem('vf_fecha_registro')) localStorage.setItem('vf_fecha_registro', fechaRegistro);
+    const diasUsados = Math.floor((new Date() - new Date(fechaRegistro.split('/').reverse().join('-'))) / 86400000) || 0;
+    const diasRestantes = Math.max(0, 30 - diasUsados);
+    const expiración = new Date();
+    expiración.setDate(expiración.getDate() + diasRestantes);
+
     let html = `
         <div class="card">
+            <p style="text-align:center;font-size:13px;color:#888;margin:0 0 10px;">${estado.config.nombreRest}</p>
             <p><b>👤 Cuenta:</b> ${estado.user}</p>
+            <p><b>🔑 Key activa:</b> <span style="font-family:monospace;font-size:12px;color:var(--neon);">${key}</span></p>
+            <p><b>📅 Expiración:</b> ${expiración.toLocaleDateString()}</p>
+            <p><b>⏳ Días restantes:</b> <span style="color:${diasRestantes <= 5 ? 'var(--rojo)' : diasRestantes <= 10 ? 'var(--naranja)' : 'var(--neon)'};">${diasRestantes} días</span></p>
             <hr>
             <button class="btn btn-azul" onclick="mostrarFormCambiarPassword()">🔐 Cambiar contraseña</button>
             <hr>
@@ -2236,6 +2259,32 @@ function renderProductosVenta() {
     });
     document.getElementById('grid-productos-venta').innerHTML = html;
 }
+async function obtenerSiguienteNumeroAsync() {
+    if (estado.editandoEspera) {
+        const num = estado.editandoEspera;
+        estado.editandoEspera = null;
+        return num;
+    }
+    // Intentar obtener el máximo global desde Supabase
+    if (navigator.onLine) {
+        try {
+            const negocioId = getNegocioId();
+            const hoy = new Date().toLocaleDateString();
+            const { data } = await sbClient.from('ventas_hoy')
+                .select('numero').eq('negocio_id', negocioId).eq('fecha', hoy)
+                .order('numero', { ascending: false }).limit(1);
+            const maxSB = data?.[0]?.numero || 0;
+            const maxLocal = estado.ventasHoy.length > 0 ? Math.max(...estado.ventasHoy.map(v => v.numero)) : 0;
+            const maxEsperas = estado.esperas.length > 0 ? Math.max(...estado.esperas.map(v => v.numero)) : 0;
+            return Math.max(maxSB, maxLocal, maxEsperas) + 1;
+        } catch(e) {}
+    }
+    // Fallback local
+    const todasLasVentas = [...estado.ventasHoy, ...estado.esperas];
+    if (todasLasVentas.length === 0) return 1;
+    return Math.max(...todasLasVentas.map(v => v.numero)) + 1;
+}
+
 function obtenerSiguienteNumero() {
     if (estado.editandoEspera) {
         const num = estado.editandoEspera;
@@ -2244,10 +2293,9 @@ function obtenerSiguienteNumero() {
     }
     const todasLasVentas = [...estado.ventasHoy, ...estado.esperas];
     if (todasLasVentas.length === 0) return 1;
-    const maxNum = Math.max(...todasLasVentas.map(v => v.numero));
-    return maxNum + 1;
+    return Math.max(...todasLasVentas.map(v => v.numero)) + 1;
 }
-function finalizarVenta(imprimir) {
+async function finalizarVenta(imprimir) {
     const emp = estado.empleadoActual;
     if (emp && !emp.permisos?.ventas) {
         notify('❌ No tienes permiso para realizar ventas', 'red');
@@ -2263,7 +2311,7 @@ function finalizarVenta(imprimir) {
     let total = estado.carrito.reduce((s, i) => s + i.c * i.p, 0);
     let metodo = document.getElementById('v-metodo').value;
     let cliente = document.getElementById('v-cli').value.trim() || 'General';
-    let numOrden = obtenerSiguienteNumero();
+    let numOrden = await obtenerSiguienteNumeroAsync();
     let pagoCon = 0, vuelto = 0;
     let vueltoActivo = document.getElementById('vuelto-activo').checked;
     
@@ -2340,14 +2388,14 @@ function finalizarVenta(imprimir) {
     }
     irDash();
 }
-function guardarEnEspera() {
+async function guardarEnEspera() {
     const emp = estado.empleadoActual;
     if (emp && !emp.permisos?.esperas) {
         notify('❌ No tienes permiso para gestionar esperas', 'red');
         return;
     }
     if (!estado.carrito.length) return notify('❌ Agrega productos', 'red');
-    let numOrden = obtenerSiguienteNumero();
+    let numOrden = await obtenerSiguienteNumeroAsync();
     const nuevaEspera = { numero: numOrden, cliente: document.getElementById('v-cli').value.trim() || 'General', items: JSON.parse(JSON.stringify(estado.carrito)), hora: formatoHora() };
     estado.esperas.push(nuevaEspera);
     estado.carrito = [];
@@ -2456,19 +2504,34 @@ function prepararCierre() {
     document.getElementById('resumen-texto').innerHTML = html;
     document.getElementById('modal-titulo').innerHTML = '🔒 CIERRE DE CAJA';
     document.getElementById('modal-resumen').style.display = 'flex';
-    accionModal = () => { 
-        estado.historial.push({ 
-            fecha: new Date().toLocaleDateString(), 
-            total, 
-            cantidad: estado.ventasHoy.length, 
-            efectivo: totalEfectivo, 
-            qr: totalQR 
-        }); 
-        estado.ventasHoy = []; 
-        guardarEnStorage(); 
-        notify('✅ Caja cerrada', 'green'); 
-        cargarPanel(); 
-        cerrarModal(); 
+    accionModal = async () => {
+        const cierrePor = emp ? emp.nombre : estado.user;
+        const entrada = {
+            fecha: new Date().toLocaleDateString(),
+            hora: formatoHora(),
+            total,
+            cantidad: estado.ventasHoy.length,
+            efectivo: totalEfectivo,
+            qr: totalQR,
+            cerradoPor: cierrePor
+        };
+        estado.historial.push(entrada);
+        estado.ventasHoy = [];
+        guardarEnStorage();
+        // Limpiar ventas_hoy en Supabase
+        if (navigator.onLine) {
+            const negocioId = getNegocioId();
+            try {
+                const hoy = new Date().toLocaleDateString();
+                await sbClient.from('ventas_hoy').delete()
+                    .eq('negocio_id', negocioId).eq('fecha', hoy);
+                // Guardar negocio actualizado (con historial)
+                await sbGuardarNegocio();
+            } catch(e) {}
+        }
+        notify('✅ Caja cerrada', 'green');
+        cargarPanel();
+        cerrarModal();
     };
 }
 // ============================================
