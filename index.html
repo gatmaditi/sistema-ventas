@@ -449,6 +449,8 @@
         <button class="btn btn-gris" style="width:auto;" onclick="irDash()">← VOLVER</button>
         <button class="btn btn-naranja" style="width:auto;" onclick="abrirEsperas()">⏳ ESPERAS</button>
     </div>
+    <!-- Banner edición de espera -->
+    <div id="espera-editando-banner" style="display:none;background:#1a1500;border:1px solid #ffaa00;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:none;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;"></div>
     <h2 style="text-align:center;color:var(--neon);">FACTURACIÓN</h2>
     <input type="text" id="v-cli" placeholder="Cliente">
     <select id="v-metodo"><option value="Efectivo">💵 EFECTIVO</option><option value="QR">📱 QR</option></select>
@@ -859,7 +861,7 @@ function agregarAPapelera(tipo, elemento, motivo) {
     const emp = estado.empleadoActual;
     const papeleraItem = {
         id: Date.now(),
-        tipo: tipo,
+        tipo,
         elemento: JSON.parse(JSON.stringify(elemento)),
         motivo: motivo && motivo.trim() !== '' ? motivo.trim() : 'Sin motivo especificado',
         fecha: new Date().toLocaleDateString(),
@@ -869,6 +871,8 @@ function agregarAPapelera(tipo, elemento, motivo) {
     };
     estado.papelera.unshift(papeleraItem);
     guardarEnStorage();
+    // Sincronizar a Supabase para que dueño lo vea
+    if (navigator.onLine) sbGuardarPapelera(papeleraItem);
 }
 
 function mostrarPapelera() {
@@ -1878,17 +1882,58 @@ function cerrarEsperas() {
 
 function cargarEsperaDesdeCapa(numero) {
     let espera = estado.esperas.find(e => e.numero === numero);
-    if (espera) {
-        estado.carrito = espera.items;
-        estado.editandoEspera = espera.numero;
-        document.getElementById('v-cli').value = espera.cliente;
-        estado.esperas = estado.esperas.filter(e => e.numero !== numero);
-        guardarEnStorage();
-        renderCarrito();
-        cerrarEsperas();
-        mostrarCapa('capa-venta');
-        notify(`✅ Pedido #${String(numero).padStart(4,'0')} cargado`, 'green');
+    if (!espera) return;
+
+    estado.carrito = JSON.parse(JSON.stringify(espera.items));
+    estado.editandoEspera = espera.numero;
+    estado.esperas = estado.esperas.filter(e => e.numero !== numero);
+    guardarEnStorage();
+
+    // Abrir facturador CON productos visibles
+    document.getElementById('v-cli').value = espera.cliente;
+    document.getElementById('v-metodo').value = espera.metodo || 'Efectivo';
+    document.getElementById('vuelto-activo').checked = false;
+    document.getElementById('vuelto-section').style.display = 'none';
+    document.getElementById('pago-con').value = '';
+
+    renderCarrito();
+    renderProductosVenta();
+
+    // Mostrar banner indicando que es edición de espera
+    const banner = document.getElementById('espera-editando-banner');
+    if (banner) {
+        banner.style.display = 'flex';
+        banner.innerHTML = `
+            <span>✏️ Editando espera <b>#${String(numero).padStart(4,'0')}</b></span>
+            <button class="btn btn-amarillo" style="width:auto;margin:0;padding:8px 14px;font-size:12px;" onclick="volverAEspera()">💾 GUARDAR EN ESPERA</button>
+        `;
     }
+
+    cerrarEsperas();
+    mostrarCapa('capa-venta');
+    notify(`✅ Pedido #${String(numero).padStart(4,'0')} cargado para editar`, 'green');
+}
+
+function volverAEspera() {
+    if (!estado.carrito.length) return notify('❌ El carrito está vacío', 'red');
+    const numero = estado.editandoEspera || obtenerSiguienteNumero();
+    const cliente = document.getElementById('v-cli').value.trim() || 'General';
+    estado.esperas.push({
+        numero,
+        cliente,
+        items: JSON.parse(JSON.stringify(estado.carrito)),
+        hora: formatoHora(),
+        metodo: document.getElementById('v-metodo').value
+    });
+    estado.carrito = [];
+    estado.editandoEspera = null;
+    guardarEnStorage();
+    if (navigator.onLine) sbGuardarEspera({ numero, cliente, items: estado.esperas[estado.esperas.length-1].items, hora: formatoHora() });
+    notify(`⏳ Pedido #${String(numero).padStart(4,'0')} guardado en espera`, 'orange');
+    irDash();
+    // Ocultar banner
+    const banner = document.getElementById('espera-editando-banner');
+    if (banner) banner.style.display = 'none';
 }
 
 // ============================================
@@ -2154,9 +2199,15 @@ function guardarEnEspera() {
     }
     if (!estado.carrito.length) return notify('❌ Agrega productos', 'red');
     let numOrden = obtenerSiguienteNumero();
-    estado.esperas.push({ numero: numOrden, cliente: document.getElementById('v-cli').value.trim() || 'General', items: JSON.parse(JSON.stringify(estado.carrito)), hora: formatoHora() });
+    const nuevaEspera = { numero: numOrden, cliente: document.getElementById('v-cli').value.trim() || 'General', items: JSON.parse(JSON.stringify(estado.carrito)), hora: formatoHora() };
+    estado.esperas.push(nuevaEspera);
     estado.carrito = [];
+    estado.editandoEspera = null;
     guardarEnStorage();
+    if (navigator.onLine) sbGuardarEspera(nuevaEspera);
+    // Ocultar banner si estaba editando
+    const banner = document.getElementById('espera-editando-banner');
+    if (banner) banner.style.display = 'none';
     notify(`⏳ Pedido #${String(numOrden).padStart(4, '0')} guardado en espera`, 'orange');
     irDash();
 }
@@ -2429,12 +2480,11 @@ function confirmarAnularVenta() { anularEjecutar(''); } // compat
 function eliminarEspera(numero) {
     const espera = estado.esperas.find(e => e.numero === numero);
     if (!espera) return;
-    
     const motivo = prompt(`✏️ Motivo de eliminación del pedido en espera #${String(numero).padStart(4, '0')}:`, '');
     agregarAPapelera('espera', espera, motivo || 'Sin motivo');
-    
     estado.esperas = estado.esperas.filter(e => e.numero !== numero);
     guardarEnStorage();
+    if (navigator.onLine) sbEliminarEspera(numero);
     mostrarEsperas();
     notify('✅ Pedido en espera eliminado', 'green');
 }
@@ -2513,6 +2563,130 @@ async function sbCargarVentasHoy() {
         guardarEnStorage();
         cargarPanel();
     } catch(e) {}
+}
+
+async function sbGuardarEspera(espera) {
+    const negocioId = estado.empleadoActual?.negocio_id || getNegocioId();
+    if (!negocioId || negocioId === 'local') return;
+    try {
+        await sbClient.from('esperas').upsert({
+            id: `${negocioId}_${espera.numero}`,
+            negocio_id: negocioId,
+            numero: espera.numero,
+            cliente: espera.cliente,
+            items: espera.items,
+            hora: espera.hora
+        }, { onConflict: 'id' });
+    } catch(e) {}
+}
+
+async function sbEliminarEspera(numero) {
+    const negocioId = estado.empleadoActual?.negocio_id || getNegocioId();
+    if (!negocioId || negocioId === 'local') return;
+    try {
+        await sbClient.from('esperas').delete().eq('negocio_id', negocioId).eq('numero', numero);
+    } catch(e) {}
+}
+
+async function sbCargarEsperas(negocioId) {
+    const nid = negocioId || getNegocioId();
+    if (!nid || nid === 'local') return;
+    try {
+        const { data, error } = await sbClient.from('esperas').select('*').eq('negocio_id', nid).order('numero', { ascending: true });
+        if (error || !data) return;
+        estado.esperas = data.map(e => ({ numero: e.numero, cliente: e.cliente, items: e.items, hora: e.hora }));
+    } catch(e) {}
+}
+
+async function sbGuardarPapelera(item) {
+    const negocioId = estado.empleadoActual?.negocio_id || getNegocioId();
+    if (!negocioId || negocioId === 'local') return;
+    try {
+        await sbClient.from('papelera').insert({
+            negocio_id: negocioId,
+            tipo: item.tipo,
+            elemento: item.elemento,
+            motivo: item.motivo,
+            fecha: item.fecha,
+            hora: item.hora,
+            eliminado_por: item.eliminadoPor,
+            rol: item.rol
+        });
+    } catch(e) {}
+}
+
+async function sbCargarPapelera() {
+    const negocioId = getNegocioId();
+    if (!negocioId || negocioId === 'local') return;
+    try {
+        const { data, error } = await sbClient.from('papelera').select('*')
+            .eq('negocio_id', negocioId).order('created_at', { ascending: false }).limit(100);
+        if (error || !data) return;
+        estado.papelera = data.map(p => ({
+            id: p.id, tipo: p.tipo, elemento: p.elemento, motivo: p.motivo,
+            fecha: p.fecha, hora: p.hora, eliminadoPor: p.eliminado_por, rol: p.rol
+        }));
+        guardarEnStorage();
+    } catch(e) {}
+}
+
+// ============================================
+// TIEMPO REAL — polling cada 8 segundos
+// ============================================
+let _pollingInterval = null;
+
+function iniciarPolling() {
+    if (_pollingInterval) clearInterval(_pollingInterval);
+    _pollingInterval = setInterval(async () => {
+        if (!navigator.onLine) return;
+        const emp = estado.empleadoActual;
+        const negocioId = emp?.negocio_id || getNegocioId();
+        if (!negocioId || negocioId === 'local') return;
+
+        if (!emp) {
+            // DUEÑO: sincronizar ventas, esperas y papelera
+            const hoy = new Date().toLocaleDateString();
+            try {
+                const { data: vData } = await sbClient.from('ventas_hoy')
+                    .select('*').eq('negocio_id', negocioId).eq('fecha', hoy)
+                    .order('numero', { ascending: true });
+                if (vData) {
+                    estado.ventasHoy = vData.map(v => ({
+                        numero: v.numero, cliente: v.cliente, total: v.total,
+                        metodo: v.metodo, hora: v.hora, items: v.items, cajero: v.cajero
+                    }));
+                }
+            } catch(e) {}
+
+            try {
+                const { data: eData } = await sbClient.from('esperas')
+                    .select('*').eq('negocio_id', negocioId).order('numero', { ascending: true });
+                if (eData) {
+                    estado.esperas = eData.map(e => ({ numero: e.numero, cliente: e.cliente, items: e.items, hora: e.hora }));
+                }
+            } catch(e) {}
+
+            try {
+                const { data: pData } = await sbClient.from('papelera').select('*')
+                    .eq('negocio_id', negocioId).order('created_at', { ascending: false }).limit(100);
+                if (pData) {
+                    estado.papelera = pData.map(p => ({
+                        id: p.id, tipo: p.tipo, elemento: p.elemento, motivo: p.motivo,
+                        fecha: p.fecha, hora: p.hora, eliminadoPor: p.eliminado_por, rol: p.rol
+                    }));
+                }
+            } catch(e) {}
+
+            guardarEnStorage();
+            // Actualizar panel solo si está visible
+            const dash = document.getElementById('capa-dash');
+            if (dash && dash.style.display !== 'none') cargarPanel();
+
+        } else {
+            // EMPLEADO: sincronizar esperas (para ver las de otros)
+            await sbCargarEsperas(negocioId);
+        }
+    }, 8000);
 }
 
 // ============================================
@@ -2692,36 +2866,36 @@ async function inicializar() {
     const hayDatos  = cargarDesdeStorage();
 
     if (sesionEmp) {
-        // Restaurar sesión de empleado
         try {
             const emp = JSON.parse(sesionEmp);
             rolActual = emp.rol;
             modoLocal = false;
             estado.empleadoActual = emp;
-            // Cargar datos del negocio desde Supabase
             if (emp.negocio_id && navigator.onLine) {
                 await sbCargarNegocio(emp.negocio_id);
+                await sbCargarEsperas(emp.negocio_id);
             }
             mostrarCapa('capa-dash');
             cargarPanel();
             actualizarDrawerUser();
             actualizarLogos();
             aplicarPermisosDrawer(emp);
+            iniciarPolling();
         } catch(e) {
             localStorage.removeItem('vf_sesion_empleado');
             mostrarCapa('capa-login');
         }
     } else if (hayDatos) {
-        // Sesión de dueño
         rolActual = 'owner';
         mostrarCapa('capa-dash');
         cargarPanel();
         actualizarDrawerUser();
         actualizarLogos();
         if (navigator.onLine) {
-            sbGuardarNegocio(); // sincronizar negocio al arrancar
+            sbGuardarNegocio();
             sbCargarEmpleados();
         }
+        iniciarPolling();
     } else {
         mostrarCapa('capa-login');
     }
