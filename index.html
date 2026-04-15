@@ -727,8 +727,12 @@ async function sbGuardarNegocio() {
     if (!id || id === 'local') return;
     try {
         await sbClient.from('negocios').upsert({
-            id, config: estado.config, inventario: estado.inventario,
-            logo: estado.logo, updated_at: new Date().toISOString()
+            id,
+            config:    estado.config,
+            inventario: estado.inventario,
+            logo:      estado.logo,
+            historial: estado.historial,
+            updated_at: new Date().toISOString()
         }, { onConflict: 'id' });
     } catch(e) {}
 }
@@ -737,9 +741,10 @@ async function sbCargarNegocio(negocioId) {
     try {
         const { data, error } = await sbClient.from('negocios').select('*').eq('id', negocioId).maybeSingle();
         if (error || !data) return false;
-        if (data.config) estado.config = data.config;
+        if (data.config)    estado.config    = data.config;
         if (data.inventario?.productos?.length > 0) estado.inventario = data.inventario;
-        if (data.logo) estado.logo = data.logo;
+        if (data.logo)      estado.logo      = data.logo;
+        if (data.historial?.length > 0) estado.historial = data.historial;
         guardarEnStorage();
         return true;
     } catch(e) { return false; }
@@ -974,24 +979,52 @@ async function vaciarPapelera() {
 // LOGIN
 // ============================================
 async function guardarLogin() {
-    const usuario = document.getElementById('in-nom').value.trim();
+    const usuario  = document.getElementById('in-nom').value.trim();
     const password = document.getElementById('in-nit').value.trim();
     if (!usuario || !password) return notify('❌ Completa los campos', 'red');
-    if (estado.user && estado.user !== usuario) return notify('❌ Usuario incorrecto', 'red');
-    if (estado.nit && estado.nit !== password) return notify('❌ Contraseña incorrecta', 'red');
-    
+
+    // Si hay datos locales, validar contra ellos
+    if (estado.user && estado.nit) {
+        if (estado.user !== usuario) return notify('❌ Usuario incorrecto', 'red');
+        if (estado.nit  !== password) return notify('❌ Contraseña incorrecta', 'red');
+    } else {
+        // Dispositivo nuevo — validar contra Supabase
+        if (navigator.onLine) {
+            notify('🔄 Verificando...', 'orange');
+            try {
+                const { data, error } = await sbClient
+                    .from('negocios').select('id,config').eq('id', usuario).maybeSingle();
+                if (error || !data) return notify('❌ Negocio no encontrado', 'red');
+                // La contraseña se guarda en config.nit
+                const passGuardada = data.config?.nit || data.config?.password;
+                if (!passGuardada) return notify('❌ Inicia sesión desde tu dispositivo principal primero', 'red');
+                if (passGuardada !== password) return notify('❌ Contraseña incorrecta', 'red');
+                // Cargar todos los datos del negocio
+                await sbCargarNegocio(usuario);
+                await sbCargarEmpleados();
+            } catch(e) {
+                return notify('❌ Sin conexión y sin datos locales', 'red');
+            }
+        } else {
+            return notify('❌ Sin datos locales. Necesitas conexión para entrar por primera vez', 'red');
+        }
+    }
+
     modoLocal = true;
-    rolActual = 'owner';
+    rolActual  = 'owner';
     estado.user = usuario;
-    estado.nit = password;
-    estado.empleadoActual = null;
+    estado.nit  = password;
+    // Guardar nit en config para validación remota
+    estado.config.nit = password;
     guardarEnStorage();
+    if (navigator.onLine) sbGuardarNegocio();
     notify('✅ Bienvenido Dueño', 'green');
     mostrarCapa('capa-dash');
     cargarPanel();
     actualizarDrawerUser();
     actualizarLogos();
     restaurarDrawerDueno();
+    iniciarPolling();
 }
 
 function cerrarSesion() {
@@ -2888,6 +2921,15 @@ function iniciarPolling() {
                         id: p.id, tipo: p.tipo, elemento: p.elemento, motivo: p.motivo,
                         fecha: p.fecha, hora: p.hora, eliminadoPor: p.eliminado_por, rol: p.rol
                     }));
+                }
+            } catch(e) {}
+
+            // Sincronizar historial desde negocios
+            try {
+                const { data: nData } = await sbClient.from('negocios')
+                    .select('historial').eq('id', negocioId).maybeSingle();
+                if (nData?.historial?.length > estado.historial.length) {
+                    estado.historial = nData.historial;
                 }
             } catch(e) {}
 
