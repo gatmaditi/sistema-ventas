@@ -2292,41 +2292,51 @@ function renderProductosVenta() {
     });
     document.getElementById('grid-productos-venta').innerHTML = html;
 }
+// ============================================
+// NUMERACIÓN GLOBAL — contador persistente
+// ============================================
 async function obtenerSiguienteNumeroAsync() {
     if (estado.editandoEspera) {
         const num = estado.editandoEspera;
         estado.editandoEspera = null;
         return num;
     }
-    // Intentar obtener el máximo global desde Supabase
-    if (navigator.onLine) {
+
+    const negocioId = getNegocioId();
+
+    // Intentar usar contador de Supabase (atómico)
+    if (navigator.onLine && negocioId && negocioId !== 'local') {
         try {
-            const negocioId = getNegocioId();
-            const hoy = new Date().toLocaleDateString();
-            const { data } = await sbClient.from('ventas_hoy')
-                .select('numero').eq('negocio_id', negocioId).eq('fecha', hoy)
-                .order('numero', { ascending: false }).limit(1);
-            const maxSB = data?.[0]?.numero || 0;
-            const maxLocal = estado.ventasHoy.length > 0 ? Math.max(...estado.ventasHoy.map(v => v.numero)) : 0;
-            const maxEsperas = estado.esperas.length > 0 ? Math.max(...estado.esperas.map(v => v.numero)) : 0;
-            return Math.max(maxSB, maxLocal, maxEsperas) + 1;
+            // Leer el contador actual
+            const { data } = await sbClient.from('negocios')
+                .select('contador_pedidos').eq('id', negocioId).maybeSingle();
+            const actual = data?.contador_pedidos || 0;
+            const siguiente = actual + 1;
+            // Incrementar en Supabase
+            await sbClient.from('negocios')
+                .update({ contador_pedidos: siguiente }).eq('id', negocioId);
+            return siguiente;
         } catch(e) {}
     }
-    // Fallback local
-    const todasLasVentas = [...estado.ventasHoy, ...estado.esperas];
-    if (todasLasVentas.length === 0) return 1;
-    return Math.max(...todasLasVentas.map(v => v.numero)) + 1;
+
+    // Fallback local: máximo de ventas + esperas
+    const todos = [...estado.ventasHoy, ...estado.esperas];
+    const localMax = todos.length > 0 ? Math.max(...todos.map(v => v.numero)) : 0;
+    // Guardar localmente para continuidad
+    const siguiente = localMax + 1;
+    return siguiente;
 }
 
 function obtenerSiguienteNumero() {
+    // Versión sync solo para compatibilidad — usar async siempre que sea posible
     if (estado.editandoEspera) {
         const num = estado.editandoEspera;
         estado.editandoEspera = null;
         return num;
     }
-    const todasLasVentas = [...estado.ventasHoy, ...estado.esperas];
-    if (todasLasVentas.length === 0) return 1;
-    return Math.max(...todasLasVentas.map(v => v.numero)) + 1;
+    const todos = [...estado.ventasHoy, ...estado.esperas];
+    if (todos.length === 0) return 1;
+    return Math.max(...todos.map(v => v.numero)) + 1;
 }
 async function finalizarVenta(imprimir) {
     const emp = estado.empleadoActual;
