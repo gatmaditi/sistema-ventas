@@ -12,6 +12,13 @@
         body { background: var(--bg); color: white; font-family: 'Segoe UI', sans-serif; margin: 0; padding: 0; }
 
         .capa { display: none; padding: 20px; max-width: 500px; margin: auto; min-height: 100vh; }
+        /* MODO PC */
+        body.modo-pc .capa { max-width: 900px; }
+        body.modo-pc .grid-prods { grid-template-columns: repeat(4,1fr); }
+        body.modo-pc .lista-dia { max-height: 500px; }
+        body.modo-pc .stats-row-pc { display: grid !important; grid-template-columns: 1fr 1fr; gap: 15px; }
+        body.modo-pc #capa-dash { max-width: 900px; }
+        body.modo-pc .card { max-width: 100%; }
         .card { background: var(--card); padding: 20px; border-radius: 15px; border: 1px solid #333; width: 100%; margin-bottom: 15px; }
 
         .btn { width: 100%; padding: 16px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; text-transform: uppercase; margin-top: 10px; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 8px; transition: transform 0.1s ease, opacity 0.2s ease; }
@@ -336,8 +343,8 @@
 <div class="drawer-overlay" onclick="cerrarDrawer()"></div>
 <div class="drawer" id="drawer">
     <div class="drawer-header">
-        <div class="logo-circle-menu" id="drawer-logo">🐔</div>
-        <div class="nombre">V&F POLLOS</div>
+        <div class="logo-circle-menu" id="drawer-logo">🏪</div>
+        <div class="nombre" id="drawer-nombre">SISTEMA DE VENTAS</div>
         <div class="user-info" id="drawer-user">Cargando...</div>
     </div>
     <div class="drawer-section">
@@ -373,6 +380,7 @@
         <div class="drawer-item" onclick="cerrarDrawer(); abrirEsperas()"><div class="icon">⏳</div><div class="text">Esperas</div></div>
         <div class="drawer-item" onclick="cerrarDrawer(); mostrarPapelera()"><div class="icon">🗑️</div><div class="text">Papelera</div></div>
         <div class="drawer-item" onclick="cerrarDrawer(); mostrarPrivacidad()"><div class="icon">🔒</div><div class="text">Privacidad</div></div>
+        <div class="drawer-item" onclick="toggleModoPC()"><div class="icon">🖥️</div><div class="text" id="drawer-modo-pc">Modo PC: OFF</div></div>
     </div>
     <div class="drawer-footer">
         <div class="drawer-item" onclick="cerrarDrawer(); cerrarSesion()"><div class="icon">🚪</div><div class="text">Cerrar Sesión</div></div>
@@ -382,20 +390,24 @@
 <!-- LOGIN -->
 <div id="capa-login" class="capa" style="display:flex;flex-direction:column;justify-content:center;">
     <div class="card">
-        <h2 id="login-titulo" style="color:var(--neon);text-align:center;">🐔 V&F POLLOS</h2>
+        <h2 id="login-titulo" style="color:var(--neon);text-align:center;">🏪 SISTEMA DE VENTAS</h2>
         <div id="login-dueno-section">
             <input type="text" id="in-nom" placeholder="Usuario dueño">
             <input type="password" id="in-nit" placeholder="Contraseña">
             <button class="btn btn-neon" onclick="guardarLogin()">ENTRAR COMO DUEÑO</button>
         </div>
         <hr>
-        <p style="text-align:center;font-size:13px;color:#888;margin:0 0 8px;">👤 Acceso de empleado</p>
-        <div style="display:flex;gap:8px;align-items:center;">
-            <input type="text" id="in-codigo-emp" placeholder="Código (ej: A3F2)" maxlength="4"
-                   oninput="this.value=this.value.toUpperCase()"
-                   onkeydown="if(event.key==='Enter') entrarConCodigo()"
-                   style="text-transform:uppercase;letter-spacing:4px;font-size:20px;text-align:center;font-weight:bold;">
-            <button class="btn btn-azul" style="width:auto;padding:14px 18px;" onclick="entrarConCodigo()">▶</button>
+        <button class="btn btn-azul" onclick="mostrarSeccionCodigo()" id="btn-vincular">🔗 VINCULAR CON CÓDIGO</button>
+        <div id="seccion-codigo" style="display:none;margin-top:12px;">
+            <p style="text-align:center;font-size:13px;color:#888;margin:0 0 10px;">Ingresa tu código de 4 caracteres</p>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <input type="text" id="in-codigo-emp" placeholder="A3F2" maxlength="4"
+                       oninput="this.value=this.value.toUpperCase()"
+                       onkeydown="if(event.key==='Enter') entrarConCodigo()"
+                       style="text-transform:uppercase;letter-spacing:6px;font-size:24px;text-align:center;font-weight:bold;">
+                <button class="btn btn-neon" style="width:auto;padding:14px 18px;" onclick="entrarConCodigo()">▶</button>
+            </div>
+            <button class="btn btn-gris" style="margin-top:8px;" onclick="ocultarSeccionCodigo()">← Volver</button>
         </div>
         <hr>
         <button class="btn btn-verde" onclick="mostrarRegistro()">📝 REGISTRAR NEGOCIO</button>
@@ -983,56 +995,85 @@ async function guardarLogin() {
     const password = document.getElementById('in-nit').value.trim();
     if (!usuario || !password) return notify('❌ Completa los campos', 'red');
 
-    // Si hay datos locales, validar contra ellos
-    if (estado.user && estado.nit) {
-        if (estado.user !== usuario) return notify('❌ Usuario incorrecto', 'red');
-        if (estado.nit  !== password) return notify('❌ Contraseña incorrecta', 'red');
-    } else {
-        // Dispositivo nuevo — validar contra Supabase
-        if (navigator.onLine) {
-            notify('🔄 Verificando...', 'orange');
-            try {
-                const { data, error } = await sbClient
-                    .from('negocios').select('id,config').eq('id', usuario).maybeSingle();
-                if (error || !data) return notify('❌ Negocio no encontrado', 'red');
-                // La contraseña se guarda en config.nit
-                const passGuardada = data.config?.nit || data.config?.password;
-                if (!passGuardada) return notify('❌ Inicia sesión desde tu dispositivo principal primero', 'red');
-                if (passGuardada !== password) return notify('❌ Contraseña incorrecta', 'red');
-                // Cargar todos los datos del negocio
-                await sbCargarNegocio(usuario);
-                await sbCargarEmpleados();
-            } catch(e) {
+    notify('🔄 Verificando...', 'orange');
+
+    // Siempre validar contra Supabase si hay conexión
+    if (navigator.onLine) {
+        try {
+            const { data, error } = await sbClient
+                .from('negocios').select('id,config').eq('id', usuario).maybeSingle();
+            if (error || !data) return notify('❌ Usuario no encontrado', 'red');
+            const passGuardada = data.config?.nit || data.config?.password;
+            if (!passGuardada) return notify('❌ Sin contraseña registrada. Contacta al administrador', 'red');
+            if (passGuardada !== password) return notify('❌ Contraseña incorrecta', 'red');
+            // Login correcto — limpiar datos locales del usuario anterior y cargar los de este
+            limpiarDatosLocales();
+            await sbCargarNegocio(usuario);
+            await sbCargarEmpleados();
+        } catch(e) {
+            // Sin conexión — intentar validar localmente
+            if (estado.user && estado.user === usuario && estado.nit === password) {
+                // OK local
+            } else if (estado.user && estado.user !== usuario) {
+                return notify('❌ Sin conexión. No puedes cambiar de cuenta offline', 'red');
+            } else if (!estado.user) {
                 return notify('❌ Sin conexión y sin datos locales', 'red');
+            } else {
+                return notify('❌ Contraseña incorrecta', 'red');
             }
-        } else {
-            return notify('❌ Sin datos locales. Necesitas conexión para entrar por primera vez', 'red');
         }
+    } else {
+        // Sin internet — solo validar si es el mismo usuario que ya está en local
+        if (!estado.user) return notify('❌ Sin conexión. No puedes iniciar sesión por primera vez sin internet', 'red');
+        if (estado.user !== usuario) return notify('❌ Sin conexión. Solo puedes entrar como "'+estado.user+'"', 'red');
+        if (estado.nit !== password) return notify('❌ Contraseña incorrecta', 'red');
     }
 
     modoLocal = true;
     rolActual  = 'owner';
     estado.user = usuario;
     estado.nit  = password;
-    // Guardar nit en config para validación remota
     estado.config.nit = password;
     guardarEnStorage();
     if (navigator.onLine) sbGuardarNegocio();
-    notify('✅ Bienvenido Dueño', 'green');
+    notify('✅ Bienvenido', 'green');
     mostrarCapa('capa-dash');
     cargarPanel();
     actualizarDrawerUser();
     actualizarLogos();
+    actualizarNombreDrawer();
     restaurarDrawerDueno();
     iniciarPolling();
 }
 
-function cerrarSesion() {
-    estado.empleadoActual = null;
-    rolActual = null;
+function limpiarDatosLocales() {
+    // Limpiar todo el estado en memoria (no el localStorage aún)
+    estado.ventasHoy = [];
+    estado.historial = [];
+    estado.esperas = [];
+    estado.clientes = [];
+    estado.empleados = [];
+    estado.papelera = [];
     estado.carrito = [];
+    estado.inventario = { productos: [], categorias: [] };
+    estado.config = {
+        nombreRest: 'SISTEMA DE VENTAS',
+        moneda: { codigo: 'Bs', simbolo: 'Bs', nombre: 'Boliviano', sufijo: false },
+        pieFactura: { mensaje: '¡Gracias por su compra!', telefonoActivo: false, telefono: '' }
+    };
+    estado.logo = '';
+    estado.user = '';
+    estado.nit = '';
+    estado.empleadoActual = null;
+}
+
+function cerrarSesion() {
+    // Limpiar TODO — el siguiente usuario debe ver datos limpios
     localStorage.removeItem('vf_sesion_empleado');
-    guardarEnStorage();
+    localStorage.removeItem('vf_pollos');
+    limpiarDatosLocales();
+    rolActual = null;
+    if (_pollingInterval) { clearInterval(_pollingInterval); _pollingInterval = null; }
     mostrarCapa('capa-login');
     const nom = document.getElementById('in-nom');
     const nit = document.getElementById('in-nit');
@@ -1040,10 +1081,24 @@ function cerrarSesion() {
     if (nom) nom.value = '';
     if (nit) nit.value = '';
     if (cod) cod.value = '';
+    ocultarSeccionCodigo();
     restaurarDrawerDueno();
     notify('🔓 Sesión cerrada', 'green');
 }
 
+function mostrarSeccionCodigo() {
+    document.getElementById('seccion-codigo').style.display = 'block';
+    document.getElementById('btn-vincular').style.display = 'none';
+    document.getElementById('in-codigo-emp').focus();
+}
+function ocultarSeccionCodigo() {
+    document.getElementById('seccion-codigo').style.display = 'none';
+    document.getElementById('btn-vincular').style.display = 'flex';
+}
+function actualizarNombreDrawer() {
+    const nombreEl = document.getElementById('drawer-nombre');
+    if (nombreEl) nombreEl.textContent = estado.config.nombreRest || 'SISTEMA DE VENTAS';
+}
 function volverLogin() { mostrarCapa('capa-login'); }
 
 // ============================================
@@ -1294,7 +1349,7 @@ function actualizarDrawerUser() {
 function actualizarLogos() {
     const drawerLogo = document.getElementById('drawer-logo');
     if (estado.logo) drawerLogo.innerHTML = `<img src="${estado.logo}" style="width:100%;height:100%;object-fit:cover;">`;
-    else drawerLogo.innerHTML = '🐔';
+    else drawerLogo.innerHTML = '🏪'; actualizarNombreDrawer();
 }
 
 // ============================================
@@ -1746,10 +1801,10 @@ function subirLogo(input) {
 }
 function eliminarLogo() { estado.logo = ''; actualizarPreviewLogo(); actualizarLogos(); notify('🗑️ Logo eliminado', 'orange'); }
 function actualizarNombreUI() {
-    const n = estado.config.nombreRest || 'V&F POLLOS';
+    const n = estado.config.nombreRest || 'SISTEMA DE VENTAS';
     const el = document.getElementById('login-titulo');
     if (el) el.innerHTML = n;
-    document.title = n + ' - Sistema de Ventas';
+    document.title = n + ' - Sistema de Ventas'; actualizarNombreDrawer();
 }
 
 // ============================================
@@ -3145,6 +3200,31 @@ function limpiarGP() {
     }
 }
 
+// ============================================
+// MODO PC (por dispositivo, persiste en localStorage)
+// ============================================
+function initModoPC() {
+    const activo = localStorage.getItem('vf_modo_pc') === '1';
+    aplicarModoPC(activo, false);
+}
+function toggleModoPC() {
+    const activo = localStorage.getItem('vf_modo_pc') === '1';
+    const nuevo = !activo;
+    localStorage.setItem('vf_modo_pc', nuevo ? '1' : '0');
+    aplicarModoPC(nuevo, true);
+}
+function aplicarModoPC(activo, recargar) {
+    const lbl = document.getElementById('drawer-modo-pc');
+    if (lbl) lbl.textContent = 'Modo PC: ' + (activo ? 'ON 🖥️' : 'OFF');
+    if (recargar) {
+        notify(activo ? '🖥️ Modo PC activado — recargando...' : '📱 Modo PC desactivado — recargando...', 'green');
+        setTimeout(() => location.reload(), 1000);
+    } else {
+        if (activo) document.body.classList.add('modo-pc');
+        else document.body.classList.remove('modo-pc');
+    }
+}
+
 // INICIALIZAR
 async function inicializar() {
     const sesionEmp = localStorage.getItem('vf_sesion_empleado');
@@ -3176,6 +3256,7 @@ async function inicializar() {
         cargarPanel();
         actualizarDrawerUser();
         actualizarLogos();
+        actualizarNombreDrawer();
         if (navigator.onLine) {
             sbGuardarNegocio();
             sbCargarEmpleados();
@@ -3187,8 +3268,8 @@ async function inicializar() {
 }
 
 inicializar();
+initModoPC();
 
-// Limpiar sesión empleado al cerrar sesión ya está en cerrarSesion()
 window.addEventListener('online',  () => { cargarPanel(); notify('🟢 Conexión restaurada', 'green'); });
 window.addEventListener('offline', () => { cargarPanel(); notify('🔴 Sin conexión - modo local', 'orange'); });
 
