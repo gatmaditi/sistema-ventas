@@ -12,13 +12,31 @@
         body { background: var(--bg); color: white; font-family: 'Segoe UI', sans-serif; margin: 0; padding: 0; }
 
         .capa { display: none; padding: 20px; max-width: 500px; margin: auto; min-height: 100vh; }
-        /* MODO PC */
-        body.modo-pc .capa { max-width: 900px; }
-        body.modo-pc .grid-prods { grid-template-columns: repeat(4,1fr); }
-        body.modo-pc .lista-dia { max-height: 500px; }
-        body.modo-pc .stats-row-pc { display: grid !important; grid-template-columns: 1fr 1fr; gap: 15px; }
-        body.modo-pc #capa-dash { max-width: 900px; }
-        body.modo-pc .card { max-width: 100%; }
+        /* MODO PC — sidebar fija estilo panel admin */
+        body.modo-pc { display: flex; }
+        body.modo-pc .drawer-overlay { display: none !important; }
+        body.modo-pc .drawer {
+            position: fixed; left: 0 !important; top: 0;
+            width: 240px; height: 100vh;
+            border-right: 1px solid #ffffff15;
+            border-radius: 0; z-index: 10;
+            transition: none;
+        }
+        body.modo-pc #app-content {
+            margin-left: 240px;
+            width: calc(100% - 240px);
+            max-width: none;
+        }
+        body.modo-pc .capa { max-width: none; }
+        body.modo-pc .capa-independiente { left: 240px; width: calc(100% - 240px); }
+        body.modo-pc .menu-btn { display: none; }
+        body.modo-pc .modal-anular,
+        body.modo-pc .modal,
+        body.modo-pc .modal-confirm { left: 240px; width: calc(100% - 240px); }
+        body.modo-pc .grid-prods { grid-template-columns: repeat(4, 1fr); }
+        body.modo-pc #capa-dash .stats-fila { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+        body.modo-pc .lista-dia { max-height: 400px; }
+        body.modo-pc .botones-exportar { flex-wrap: nowrap; }
         .card { background: var(--card); padding: 20px; border-radius: 15px; border: 1px solid #333; width: 100%; margin-bottom: 15px; }
 
         .btn { width: 100%; padding: 16px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; text-transform: uppercase; margin-top: 10px; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 8px; transition: transform 0.1s ease, opacity 0.2s ease; }
@@ -414,6 +432,9 @@
     </div>
 </div>
 
+<!-- APP CONTENT -->
+<div id="app-content">
+
 <!-- REGISTRO -->
 <div id="capa-registro" class="capa" style="display:none;">
     <div class="card">
@@ -514,6 +535,8 @@
     </div>
     <div id="gp-vacio" style="text-align:center;padding:30px;color:#555;"><div style="font-size:40px;">📊</div><p>Agrega productos o analiza tus ventas de hoy para ver el análisis de ganancias</p></div>
 </div>
+
+</div><!-- /app-content -->
 
 <script>
 // ============================================
@@ -1705,7 +1728,7 @@ function mostrarConfiguracion() {
             <label>📝 Mensaje pie de factura</label>
             <input type="text" id="cfg-mensaje" value="${estado.config.pieFactura.mensaje}">
             <div class="checkbox-row"><input type="checkbox" id="cfg-nit-activo" ${estado.config.pieFactura.nitActivo ? 'checked' : ''}><label>🪪 Mostrar NIT en factura</label></div>
-            <input type="text" id="cfg-nit-val" placeholder="NIT / RUC del negocio" value="${estado.config.pieFactura.nit || estado.nit || ''}">
+            <input type="text" id="cfg-nit-val" placeholder="NIT / RUC del negocio" value="${estado.config.pieFactura.nit || ''}">
             <div class="checkbox-row"><input type="checkbox" id="cfg-tel-activo" ${estado.config.pieFactura.telefonoActivo ? 'checked' : ''}><label>📞 Mostrar teléfono en factura</label></div>
             <input type="text" id="cfg-tel" placeholder="Teléfono" value="${estado.config.pieFactura.telefono}">
             <button class="btn btn-verde" onclick="guardarConfiguracion()">💾 GUARDAR</button>
@@ -2359,27 +2382,21 @@ async function obtenerSiguienteNumeroAsync() {
 
     const negocioId = getNegocioId();
 
-    // Intentar usar contador de Supabase (atómico)
     if (navigator.onLine && negocioId && negocioId !== 'local') {
         try {
-            // Leer el contador actual
             const { data } = await sbClient.from('negocios')
                 .select('contador_pedidos').eq('id', negocioId).maybeSingle();
             const actual = data?.contador_pedidos || 0;
             const siguiente = actual + 1;
-            // Incrementar en Supabase
             await sbClient.from('negocios')
                 .update({ contador_pedidos: siguiente }).eq('id', negocioId);
             return siguiente;
         } catch(e) {}
     }
 
-    // Fallback local: máximo de ventas + esperas
+    // Fallback local — solo ventas y esperas del día actual
     const todos = [...estado.ventasHoy, ...estado.esperas];
-    const localMax = todos.length > 0 ? Math.max(...todos.map(v => v.numero)) : 0;
-    // Guardar localmente para continuidad
-    const siguiente = localMax + 1;
-    return siguiente;
+    return todos.length > 0 ? Math.max(...todos.map(v => v.numero)) + 1 : 1;
 }
 
 function obtenerSiguienteNumero() {
@@ -2615,14 +2632,18 @@ function prepararCierre() {
         };
         estado.historial.push(entrada);
         estado.ventasHoy = [];
+        estado.esperas = []; // limpiar esperas también al cierre
         guardarEnStorage();
-        // Limpiar ventas_hoy en Supabase
+        // Limpiar ventas_hoy en Supabase y resetear contador
         if (navigator.onLine) {
             const negocioId = getNegocioId();
             try {
                 const hoy = new Date().toLocaleDateString();
                 await sbClient.from('ventas_hoy').delete()
                     .eq('negocio_id', negocioId).eq('fecha', hoy);
+                // Resetear contador de pedidos a 0 para que el próximo empiece en 1
+                await sbClient.from('negocios')
+                    .update({ contador_pedidos: 0 }).eq('id', negocioId);
                 // Guardar negocio actualizado (con historial)
                 await sbGuardarNegocio();
             } catch(e) {}
@@ -3215,13 +3236,21 @@ function toggleModoPC() {
 }
 function aplicarModoPC(activo, recargar) {
     const lbl = document.getElementById('drawer-modo-pc');
-    if (lbl) lbl.textContent = 'Modo PC: ' + (activo ? 'ON 🖥️' : 'OFF');
+    if (lbl) lbl.textContent = 'Modo PC: ' + (activo ? 'ON 🖥️' : 'OFF 📱');
     if (recargar) {
-        notify(activo ? '🖥️ Modo PC activado — recargando...' : '📱 Modo PC desactivado — recargando...', 'green');
+        notify(activo ? '🖥️ Modo PC activado — recargando...' : '📱 Modo móvil — recargando...', 'green');
         setTimeout(() => location.reload(), 1000);
     } else {
-        if (activo) document.body.classList.add('modo-pc');
-        else document.body.classList.remove('modo-pc');
+        if (activo) {
+            document.body.classList.add('modo-pc');
+            // En modo PC el drawer siempre está abierto y sin overlay
+            const drawer = document.getElementById('drawer');
+            if (drawer) drawer.classList.add('open');
+        } else {
+            document.body.classList.remove('modo-pc');
+            const drawer = document.getElementById('drawer');
+            if (drawer) drawer.classList.remove('open');
+        }
     }
 }
 
