@@ -930,16 +930,13 @@ function agregarAPapelera(tipo, elemento, motivo) {
 }
 
 async function mostrarPapelera() {
+    cerrarTodasLasCapas();
     const papeleraDiv = document.getElementById('capa-papelera');
     const contenido = document.getElementById('papelera-contenido');
-    
     papeleraDiv.style.display = 'block';
     document.getElementById('capa-dash').style.display = 'none';
     contenido.innerHTML = '<div class="card" style="text-align:center;color:#888;">🔄 Cargando...</div>';
-
-    // Siempre cargar desde Supabase si hay conexión
     if (navigator.onLine) await sbCargarPapelera();
-
     renderPapelera();
 }
 
@@ -1091,6 +1088,13 @@ function limpiarDatosLocales() {
 }
 
 function cerrarSesion() {
+    if (!confirm('¿Estás seguro de cerrar sesión?')) return;
+    cerrarTodasLasCapas();
+    // Cerrar drawer
+    const drawer = document.getElementById('drawer');
+    const overlay = document.getElementById('drawer-overlay');
+    if (drawer) drawer.classList.remove('open');
+    if (overlay) overlay.classList.remove('show');
     // Limpiar TODO — el siguiente usuario debe ver datos limpios
     localStorage.removeItem('vf_sesion_empleado');
     localStorage.removeItem('vf_pollos');
@@ -1128,6 +1132,7 @@ function volverLogin() { mostrarCapa('capa-login'); }
 // AGREGAR (Empleados)
 // ============================================
 async function abrirAgregar() {
+    cerrarTodasLasCapas();
     const agregarDiv = document.getElementById('capa-agregar');
     agregarDiv.style.display = 'block';
     document.getElementById('capa-dash').style.display = 'none';
@@ -1982,6 +1987,7 @@ function abrirHistorial() {
         notify('❌ No tienes permiso para ver el historial', 'red');
         return;
     }
+    cerrarTodasLasCapas();
     const historialDiv = document.getElementById('capa-historial');
     const contenido = document.getElementById('historial-contenido');
     
@@ -2068,15 +2074,13 @@ async function abrirEsperas() {
         notify('❌ No tienes permiso para gestionar esperas', 'red');
         return;
     }
+    cerrarTodasLasCapas();
     const esperasDiv = document.getElementById('capa-esperas');
     const contenido = document.getElementById('esperas-contenido');
     esperasDiv.style.display = 'block';
     document.getElementById('capa-dash').style.display = 'none';
     contenido.innerHTML = '<div class="card" style="text-align:center;color:#888;">🔄 Cargando...</div>';
-
-    // Cargar desde Supabase siempre
     if (navigator.onLine) await sbCargarEsperas(getNegocioId());
-
     renderEsperas();
 }
 
@@ -2590,7 +2594,25 @@ function cargarPanel() {
         if (btnRestaurar) btnRestaurar.style.display = 'none';
     }
 }
-function irDash() { cargarPanel(); mostrarCapa('capa-dash'); }
+// ============================================
+// NAVEGACIÓN CENTRAL — cierra todas las capas antes de abrir una
+// ============================================
+function cerrarTodasLasCapas() {
+    const capas = ['capa-historial','capa-esperas','capa-papelera','capa-agregar','capa-ganancias-pro'];
+    capas.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
+    // Cerrar modales también
+    const modal = document.getElementById('modal-inventario');
+    if (modal) modal.style.display = 'none';
+}
+
+function irDash() {
+    cerrarTodasLasCapas();
+    cargarPanel();
+    mostrarCapa('capa-dash');
+}
 function abrirFacturador() { 
     estado.carrito = []; 
     renderCarrito(); 
@@ -2632,7 +2654,7 @@ function prepararCierre() {
         };
         estado.historial.push(entrada);
         estado.ventasHoy = [];
-        estado.esperas = []; // limpiar esperas también al cierre
+        // Esperas NO se borran al cerrar caja — sobreviven al siguiente día
         guardarEnStorage();
         // Limpiar ventas_hoy en Supabase y resetear contador
         if (navigator.onLine) {
@@ -3061,7 +3083,7 @@ function abrirGananciasPro() {
         notify('❌ No tienes permiso para ver ganancias', 'red');
         return;
     }
-    document.getElementById('capa-ganancias-pro').style.display = 'block';
+    cerrarTodasLasCapas(); document.getElementById('capa-ganancias-pro').style.display = 'block';
     document.getElementById('capa-dash').style.display = 'none';
     renderGP();
 }
