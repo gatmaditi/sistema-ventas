@@ -842,7 +842,7 @@ async function entrarConCodigo() {
 
     notify(`✅ Bienvenido ${emp.nombre}`, 'green');
     input.value = '';
-    mostrarCapa('capa-dash');
+    mostrarPanel(); mostrarCapa('capa-dash');
     cargarPanel();
     actualizarDrawerUser();
     actualizarLogos();
@@ -1056,7 +1056,7 @@ async function guardarLogin() {
     estado.config.nit = password;
     guardarEnStorage();
     if (navigator.onLine) sbGuardarNegocio();
-    notify('✅ Bienvenido', 'green');
+    mostrarPanel(); notify('✅ Bienvenido', 'green');
     mostrarCapa('capa-dash');
     cargarPanel();
     actualizarDrawerUser();
@@ -1090,17 +1090,22 @@ function limpiarDatosLocales() {
 function cerrarSesion() {
     if (!confirm('¿Estás seguro de cerrar sesión?')) return;
     cerrarTodasLasCapas();
-    // Cerrar drawer
+    // Ocultar drawer y app-content completamente
     const drawer = document.getElementById('drawer');
-    const overlay = document.getElementById('drawer-overlay');
-    if (drawer) drawer.classList.remove('open');
-    if (overlay) overlay.classList.remove('show');
-    // Limpiar TODO — el siguiente usuario debe ver datos limpios
+    const drawerOverlay = document.getElementById('drawer-overlay');
+    const appContent = document.getElementById('app-content');
+    if (drawer) { drawer.classList.remove('open'); drawer.style.display = 'none'; }
+    if (drawerOverlay) drawerOverlay.classList.remove('show');
+    if (appContent) appContent.style.display = 'none';
+    // Quitar modo-pc del body para que login se vea bien
+    document.body.classList.remove('modo-pc');
+    // Limpiar datos
     localStorage.removeItem('vf_sesion_empleado');
     localStorage.removeItem('vf_pollos');
     limpiarDatosLocales();
     rolActual = null;
     if (_pollingInterval) { clearInterval(_pollingInterval); _pollingInterval = null; }
+    // Mostrar login fullscreen
     mostrarCapa('capa-login');
     const nom = document.getElementById('in-nom');
     const nit = document.getElementById('in-nit');
@@ -2031,11 +2036,15 @@ function exportarPDFHistorial() {
         historialHtml += `
             <div style="border-bottom:1px solid #ddd; padding:8px; margin-bottom:8px;">
                 <div style="display:flex; justify-content:space-between;">
-                    <span><b>📅 ${h.fecha}</b></span>
+                    <span><b>📅 ${h.fecha}</b> <small style="color:#888;">${h.hora || ''} — cerrado por: ${h.cerradoPor || 'Dueño'}</small></span>
                     <span>💰 ${formatMoney(h.total)}</span>
                 </div>
                 <div>📦 Ventas: ${h.cantidad} pedidos</div>
                 <div>💵 Efectivo: ${formatMoney(h.efectivo || 0)} | 📱 QR: ${formatMoney(h.qr || 0)}</div>
+                ${h.esperasPendientes?.length > 0 ? `<div style="background:#2a1500;border:1px solid #ff880033;border-radius:6px;padding:6px 10px;margin-top:6px;font-size:12px;">
+                    ⚠️ <b style="color:#ff8800;">${h.esperasPendientes.length} pedido(s) quedaron en espera sin confirmar:</b>
+                    ${h.esperasPendientes.map(e => `<div style="color:#aaa;margin-top:3px;">· #${String(e.numero).padStart(4,'0')} ${e.cliente} — ${e.items.map(i=>`${i.c}x ${i.n}`).join(', ')}</div>`).join('')}
+                </div>` : ''}
             </div>
         `;
     });
@@ -2608,6 +2617,16 @@ function cerrarTodasLasCapas() {
     if (modal) modal.style.display = 'none';
 }
 
+function mostrarPanel() {
+    // Mostrar drawer y app-content
+    const drawer = document.getElementById('drawer');
+    const appContent = document.getElementById('app-content');
+    if (drawer) drawer.style.display = '';
+    if (appContent) appContent.style.display = '';
+    // Re-aplicar modo PC si estaba activo
+    initModoPC();
+}
+
 function irDash() {
     cerrarTodasLasCapas();
     cargarPanel();
@@ -2643,6 +2662,9 @@ function prepararCierre() {
     document.getElementById('modal-resumen').style.display = 'flex';
     accionModal = async () => {
         const cierrePor = emp ? emp.nombre : estado.user;
+        const esperasPendientes = estado.esperas.length > 0 
+            ? JSON.parse(JSON.stringify(estado.esperas)) 
+            : [];
         const entrada = {
             fecha: new Date().toLocaleDateString(),
             hora: formatoHora(),
@@ -2650,7 +2672,8 @@ function prepararCierre() {
             cantidad: estado.ventasHoy.length,
             efectivo: totalEfectivo,
             qr: totalQR,
-            cerradoPor: cierrePor
+            cerradoPor: cierrePor,
+            esperasPendientes: esperasPendientes
         };
         estado.historial.push(entrada);
         estado.ventasHoy = [];
@@ -3291,7 +3314,7 @@ async function inicializar() {
                 await sbCargarNegocio(emp.negocio_id);
                 await sbCargarEsperas(emp.negocio_id);
             }
-            mostrarCapa('capa-dash');
+            mostrarPanel(); mostrarCapa('capa-dash');
             cargarPanel();
             actualizarDrawerUser();
             actualizarLogos();
@@ -3303,7 +3326,7 @@ async function inicializar() {
         }
     } else if (hayDatos) {
         rolActual = 'owner';
-        mostrarCapa('capa-dash');
+        mostrarPanel(); mostrarCapa('capa-dash');
         cargarPanel();
         actualizarDrawerUser();
         actualizarLogos();
